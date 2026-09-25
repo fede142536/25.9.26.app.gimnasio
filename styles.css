@@ -35,6 +35,7 @@
   --accent-soft: rgba(180, 121, 10, 0.12);
   --success: #2F7A4E;
   --success-soft: rgba(47, 122, 78, 0.12);
+  --danger-soft: rgba(178, 58, 46, 0.12);
   --danger: #B23A2E;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 2px 8px rgba(16, 24, 40, 0.06);
   --shadow-float: 0 8px 28px rgba(16, 24, 40, 0.18);
@@ -87,6 +88,7 @@
     --success: #5FA777;
     --success-soft: rgba(95, 167, 119, 0.16);
     --danger: #E0685C;
+    --danger-soft: rgba(224, 104, 92, 0.16);
     --shadow: none;
     --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.5);
 
@@ -106,7 +108,7 @@
   --bg: #111317; --surface: #1A1D22; --surface-2: #23272E; --surface-3: #2C313A; --border: #2E333C;
   --text: #EDEFF2; --text-muted: #9AA1AC; --text-faint: #6E7581;
   --accent: #E8B23D; --accent-strong: #F0C25E; --accent-ink: #17181C; --accent-soft: rgba(232, 178, 61, 0.14);
-  --success: #5FA777; --success-soft: rgba(95, 167, 119, 0.16); --danger: #E0685C;
+  --success: #5FA777; --success-soft: rgba(95, 167, 119, 0.16); --danger: #E0685C; --danger-soft: rgba(224, 104, 92, 0.16);
   --shadow: none; --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.5);
   --chart-surface: #1a1a19; --chart-ink-primary: #ffffff; --chart-ink-secondary: #c3c2b7;
   --chart-ink-muted: #898781; --chart-grid: #2c2c2a; --chart-baseline: #383835;
@@ -352,6 +354,17 @@ button.set-pill.done:active { filter: brightness(0.94); }
   font-size: 13px; font-weight: 700; color: var(--accent-strong);
 }
 .pr-badge .icon { width: 16px; height: 16px; }
+
+.effort-row { margin: 12px 0 4px; }
+.effort-chips { display: flex; gap: 6px; margin-top: 4px; }
+.effort-chip {
+  flex: 1; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+  border-radius: 11px; padding: 9px 4px; font-size: 12.5px; font-weight: 600;
+}
+.effort-chip:active { transform: scale(0.97); }
+.effort-chip.facil.active { background: var(--success-soft); border-color: var(--success); color: var(--success); }
+.effort-chip.justo.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.effort-chip.fallo.active { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 
 .day-done {
   text-align: center; padding: 22px 16px; border-radius: var(--radius); background: var(--success-soft);

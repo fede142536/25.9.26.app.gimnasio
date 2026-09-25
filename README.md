@@ -52,7 +52,14 @@ anterior"). Cada ejercicio también admite una nota libre (agarre, banda,
 altura del asiento…), visible en "Hoy" y en "Entrenador".
 
 Cualquier serie ya registrada (en "Hoy" o en el historial de "Progreso")
-se puede tocar para editar el peso/reps o borrarla, por si se cargó mal.
+se puede tocar para editar el peso/reps/esfuerzo o borrarla, por si se
+cargó mal.
+
+Al registrar cada serie se puede marcar cómo se sintió (Fácil / Justo /
+Al fallo). El entrenador lo usa para afinar la fatiga: entrenar al fallo
+seguido cansa aunque se llegue a la meta de reps, algo que solo mirar las
+reps no detecta. Y si la última sesión se sintió fácil, sugiere un salto
+de peso mayor al habitual.
 
 Los datos viven solo en este dispositivo: la app pide almacenamiento
 persistente al navegador y recuerda hacer un respaldo si pasa mucho

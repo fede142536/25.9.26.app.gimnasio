@@ -8,7 +8,7 @@ import {
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
-import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek } from './coach.js';
+import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek, EFFORT_LEVELS } from './coach.js';
 import { restTimer, startRest, skipRest, addRestTime, resyncRest } from './timer.js';
 import { icon } from './icons.js';
 import { lineChart } from './charts.js';
@@ -29,7 +29,7 @@ let bodyMetric = 'weight';
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.8';
+const APP_VERSION = '2026-09-25.9';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -194,7 +194,7 @@ function renderHoy(main) {
       const lastToday = logged[logged.length - 1];
       const defaultWeight = lastToday ? lastToday.weight
         : suggestion.suggestedWeight != null ? suggestion.suggestedWeight : (lastWeightFor(key) ?? 0);
-      todaySets[ex.id] = { setsLogged: logged.length, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length), pr: null };
+      todaySets[ex.id] = { setsLogged: logged.length, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length), pr: null, effort: 'justo' };
     }
     const prog = todaySets[ex.id];
     return { ex, key, suggestion, logged, prog, done: prog.setsLogged >= ex.sets };
@@ -316,6 +316,12 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
         </div>
       </div>
     </div>
+    <div class="effort-row">
+      <div class="stepper-label">¿Cómo se sintió?</div>
+      <div class="effort-chips">
+        ${EFFORT_LEVELS.map(l => `<button class="effort-chip ${l.key} ${prog.effort === l.key ? 'active' : ''}" onclick="App.setEffort('${ex.id}', '${l.key}')">${escapeHtml(l.label)}</button>`).join('')}
+      </div>
+    </div>
     <button class="btn-primary" onclick="App.logSet('${ex.id}', '${dayId}')">${icon('check')} Registrar serie ${prog.setsLogged + 1} de ${ex.sets}</button>
     ${prBadge}
   </article>`;
@@ -358,6 +364,13 @@ function editSetModalHtml() {
       <p class="hint" style="margin-top:-10px">${escapeHtml(log.exerciseName)} · serie ${log.setNumber} · ${formatDate(log.date)}</p>
       <div class="field"><label>Peso (kg)</label><input type="text" inputmode="decimal" id="editSetWeight" value="${fmtNum(log.weight)}"></div>
       <div class="field"><label>Repeticiones</label><input type="text" inputmode="numeric" id="editSetReps" value="${log.reps}"></div>
+      <div class="field">
+        <label>¿Cómo se sintió?</label>
+        <div class="effort-chips">
+          ${EFFORT_LEVELS.map(l => `<button type="button" class="effort-chip ${l.key} ${log.effort === l.key ? 'active' : ''}" onclick="App.setEditSetEffort('${l.key}', this)">${escapeHtml(l.label)}</button>`).join('')}
+        </div>
+        <input type="hidden" id="editSetEffort" value="${log.effort || ''}">
+      </div>
       <button class="btn-danger" onclick="App.deleteEditedSet()">${icon('trash')} Borrar esta serie</button>
       <div class="modal-close-row">
         <button class="btn-secondary" style="width:auto;padding:9px 20px" onclick="App.closeModal()">Cancelar</button>
@@ -383,6 +396,11 @@ function syncTodaySetsAfterEdit(dayId, exId, count) {
   if (ex) prog.reps = repsForSetIndex(ex, count);
 }
 
+function setEditSetEffort(key, btn) {
+  document.getElementById('editSetEffort').value = key;
+  btn.parentElement.querySelectorAll('.effort-chip').forEach(b => b.classList.toggle('active', b === btn));
+}
+
 function saveEditedSet() {
   const log = state.logs.find(l => l.id === editingLog);
   if (!log) { closeModal(); return; }
@@ -391,6 +409,7 @@ function saveEditedSet() {
   if (!Number.isFinite(reps) || reps <= 0) { alert('Las repeticiones tienen que ser un número mayor a 0.'); return; }
   log.weight = Math.max(0, weight);
   log.reps = reps;
+  log.effort = document.getElementById('editSetEffort').value || null;
   editingLog = null; modalView = null;
   persist(); render();
 }
@@ -415,6 +434,7 @@ function useSuggestion(exId, weight) { todaySets[exId].weight = weight; render()
 /** Acepta coma o punto decimal ("42,5" o "42.5"); no redibuja para no interrumpir lo que se está escribiendo. */
 function setWeight(exId, value) { todaySets[exId].weight = Math.max(0, parseFloat(String(value).replace(',', '.')) || 0); }
 function setReps(exId, value) { todaySets[exId].reps = Math.max(0, parseInt(value, 10) || 0); }
+function setEffort(exId, key) { todaySets[exId].effort = key; render(); }
 
 /**
  * Registrar una serie. Si el ejercicio es parte de una superserie (2+
@@ -442,7 +462,7 @@ function logSet(exId, dayId) {
     id: uid(), ts: Date.now(), date: todayISO(), routineId: routine.id, dayId,
     exerciseId: exId, exerciseName: ex.name, exerciseKey: key, muscleGroup: ex.muscleGroup,
     weight: prog.weight, reps: prog.reps, setNumber: prog.setsLogged + 1,
-    weekNumber: info.weekNumber, weekInBlock: info.weekInBlock, phase: info.phase,
+    weekNumber: info.weekNumber, weekInBlock: info.weekInBlock, phase: info.phase, effort: prog.effort || null,
   });
   prog.setsLogged++;
   if (prog.weight > 0 && prog.weight > wasMax) prog.pr = prog.weight;
@@ -1305,7 +1325,7 @@ async function runInstallDiagnostics() {
 /* ================================================================ Init ================================================================ */
 
 window.App = {
-  switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, logSet,
+  switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, setEffort, logSet,
   skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
@@ -1316,7 +1336,7 @@ window.App = {
   openCategories, renameCat, addCat, askDeleteCat, cancelDeleteCat, confirmDeleteCat,
   bodySetDate, bodySetValue, setBodyMetric, bodyCancelEdit, saveMeasurements, editMeasurement, deleteMeasurement, editHeight,
   exportWorkouts: () => exportWorkoutsCsv(state), exportMeasures: () => exportMeasurementsCsv(state),
-  editSetOpen, saveEditedSet, deleteEditedSet, snoozeBackup, toggleWakeLockSetting,
+  editSetOpen, saveEditedSet, deleteEditedSet, setEditSetEffort, snoozeBackup, toggleWakeLockSetting,
 };
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });

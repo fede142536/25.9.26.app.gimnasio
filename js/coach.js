@@ -21,6 +21,11 @@
  *    hay sesiones de descarga (por ejemplo, empezaste a usar la app en
  *    una semana de descarga), el peso habitual se estima deshaciendo la
  *    reducción de la descarga.
+ * 5. Si se registra cómo se sintió cada serie (fácil/justo/al fallo), esa
+ *    percepción de esfuerzo (RPE simplificado) se suma a las reps para
+ *    medir fatiga: entrenar al fallo seguido cansa aunque se llegue a la
+ *    meta de reps, algo que mirar solo las reps no detecta. Si además la
+ *    última sesión se sintió fácil, se sugiere un salto de peso mayor.
  *
  * El usuario puede indicar en qué semana del bloque está: eso mueve
  * `routine.cycleStartDate` (el inicio del bloque actual), sin tocar la
@@ -29,6 +34,12 @@
 
 import { daysBetween, normalizeName } from './state.js';
 import { isLowerBody } from './muscleGroups.js';
+
+export const EFFORT_LEVELS = [
+  { key: 'facil', label: 'Fácil', score: 0 },
+  { key: 'justo', label: 'Justo', score: 1 },
+  { key: 'fallo', label: 'Al fallo', score: 2 },
+];
 
 /** Semana/bloque/fase del programa para una fecha dada. */
 export function weekInfo(routine, dateISO, settings) {
@@ -75,6 +86,15 @@ function sessionsFor(logs, exerciseKey) {
     }));
 }
 
+/** Puntaje de esfuerzo de una serie (0 fácil · 1 justo · 2 al fallo), o null si no se registró. */
+function effortScoreOf(setLog) { return EFFORT_LEVELS.find(l => l.key === setLog.effort)?.score ?? null; }
+
+/** Esfuerzo promedio de una sesión, o null si ninguna de sus series lo registró. */
+function sessionEffortScore(session) {
+  const scores = session.sets.map(effortScoreOf).filter(s => s != null);
+  return scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+}
+
 /** ¿Qué fracción de las series de una sesión llegó a la meta de reps? */
 function repsMetRatio(session, plannedReps) {
   if (!session.sets.length) return 0;
@@ -95,9 +115,11 @@ export function suggestForExercise({ exerciseName, muscleGroup, plannedReps }, l
   const topWeight = (session) => Math.max(...session.sets.map(s => s.weight));
   const pct = Math.round((1 - settings.deloadFactor) * 100);
 
-  // fatiga: sesiones de carga (de las últimas 3) que no llegaron a la mitad de las series con la meta de reps
+  // fatiga: sesiones de carga (de las últimas 3) que no llegaron a la mitad de las series con la meta de
+  // reps, O que en promedio se sintieron "al fallo" — entrenar al fallo seguido cansa aunque se llegue a la meta.
   const recent = loadSessions.slice(0, 3);
-  const strugglingSessions = recent.filter(s => repsMetRatio(s, plannedReps) < 0.5).length;
+  const struggled = (s) => repsMetRatio(s, plannedReps) < 0.5 || sessionEffortScore(s) >= 1.5;
+  const strugglingSessions = recent.filter(struggled).length;
   const fatigue = !loadSessions.length ? 'sin datos' : strugglingSessions >= 2 ? 'alta' : strugglingSessions === 1 ? 'media' : 'baja';
 
   if (phase === 'descarga') {
@@ -142,13 +164,18 @@ export function suggestForExercise({ exerciseName, muscleGroup, plannedReps }, l
   const ratio = repsMetRatio(last, plannedReps);
 
   if (ratio === 1 && fatigue !== 'alta') {
-    const increment = isLowerBody(muscleGroup) ? settings.incrementLower : settings.incrementUpper;
+    const baseIncrement = isLowerBody(muscleGroup) ? settings.incrementLower : settings.incrementUpper;
+    const lastEffort = sessionEffortScore(last);
+    const feltEasy = lastEffort != null && lastEffort <= 0.5; // en promedio, entre "fácil" y "justo"
+    const increment = feltEasy ? roundToHalf(baseIncrement * 1.6) : baseIncrement;
     if (lastTopWeight > 0) {
       return {
         suggestedWeight: roundToHalf(lastTopWeight + increment),
         suggestedReps: plannedReps,
         fatigue,
-        note: `Cerraste todas las series con la meta de reps: subí ${String(increment).replace('.', ',')} kg.`,
+        note: feltEasy
+          ? `Te resultó fácil y cerraste todas las series: subí ${String(increment).replace('.', ',')} kg de una.`
+          : `Cerraste todas las series con la meta de reps: subí ${String(increment).replace('.', ',')} kg.`,
       };
     }
     return {
