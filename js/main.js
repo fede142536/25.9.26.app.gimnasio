@@ -1,6 +1,7 @@
 import {
   loadState, saveState, uid, todayISO, normalizeName,
   getRoutine, getActiveRoutine, exportBackup, importBackup, DEFAULT_SETTINGS,
+  repsForSetIndex, repsSchemeLabel, parseRepsSchemeInput,
 } from './state.js';
 import { MUSCLE_GROUPS, muscleGroupClass, guessMuscleGroup, slotFor } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, PASTE_PLACEHOLDER } from './parser.js';
@@ -91,32 +92,34 @@ function renderHoy(main) {
 
   for (const ex of day.exercises) {
     const key = normalizeName(ex.name);
-    const suggestion = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.reps }, state.logs, state.settings, info.phase);
+    const plannedReps = ex.repsScheme[ex.repsScheme.length - 1]; // la serie más pesada del esquema, la que manda para progresar
+    const suggestion = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps }, state.logs, state.settings, info.phase);
 
     if (!todaySets[ex.id]) {
       const defaultWeight = suggestion.suggestedWeight != null ? suggestion.suggestedWeight : (lastWeightFor(key) ?? 0);
-      todaySets[ex.id] = { setsLogged: 0, weight: defaultWeight, reps: suggestion.suggestedReps || ex.reps };
+      todaySets[ex.id] = { setsLogged: 0, weight: defaultWeight, reps: repsForSetIndex(ex, 0) };
     }
     const prog = todaySets[ex.id];
     const done = prog.setsLogged >= ex.sets;
     const last = lastWeightFor(key);
     const dots = Array.from({ length: ex.sets }, (_, i) => `<span class="dot ${i < prog.setsLogged ? 'filled' : ''}"></span>`).join('');
+    const schemeRow = Array.from({ length: ex.sets }, (_, i) => `<span class="${i === prog.setsLogged && !done ? 'rep-current' : ''}">${repsForSetIndex(ex, i)}</span>`).join(' · ');
 
     html += `<div class="card ${done ? 'done' : ''}">
       <div class="chip-row" style="margin-bottom:6px">
         <span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>
       </div>
       <p class="ex-name">${escapeHtml(ex.name)}</p>
-      <p class="ex-meta">${ex.sets} series × ${ex.reps} reps · descanso ${ex.restSeconds}s
+      <p class="ex-meta">${ex.sets} series · reps por serie: ${schemeRow} · descanso ${ex.restSeconds}s
         ${last != null ? ` · última vez: <b>${last} kg</b>` : ''}</p>
-      ${suggestion.suggestedWeight != null ? `<p class="coach-hint">Sugerido hoy: <b>${suggestion.suggestedWeight} kg × ${suggestion.suggestedReps || ex.reps}</b><br>${escapeHtml(suggestion.note)}</p>` : `<p class="coach-hint">${escapeHtml(suggestion.note)}</p>`}
+      ${suggestion.suggestedWeight != null ? `<p class="coach-hint">Sugerido hoy: <b>${suggestion.suggestedWeight} kg</b><br>${escapeHtml(suggestion.note)}</p>` : `<p class="coach-hint">${escapeHtml(suggestion.note)}</p>`}
       <div class="weight-row">
         <button class="stepper-btn" onclick="App.adjustWeight('${ex.id}', -2.5)">−</button>
         <input class="weight-value" type="number" step="0.5" value="${prog.weight}" oninput="App.setWeight('${ex.id}', this.value)">
         <button class="stepper-btn" onclick="App.adjustWeight('${ex.id}', 2.5)">+</button>
       </div>
       <p class="weight-unit">kg</p>
-      <div class="reps-row"><span>Reps:</span><input type="number" value="${prog.reps}" oninput="App.setReps('${ex.id}', this.value)"></div>
+      <div class="reps-row"><span>Reps de esta serie:</span><input type="number" value="${prog.reps}" oninput="App.setReps('${ex.id}', this.value)"></div>
       <div class="set-dots">${dots}</div>
       <button class="btn-primary" ${done ? 'disabled' : ''} onclick="App.logSet('${ex.id}', '${day.id}')">
         ${done ? 'Ejercicio completo' : `Registrar serie ${prog.setsLogged + 1} / ${ex.sets}`}
@@ -154,7 +157,10 @@ function logSet(exId, dayId) {
     const el = document.getElementById(`pr-${exId}`);
     if (el) el.innerHTML = `<p class="pr-badge">Nuevo PR: ${prog.weight} kg</p>`;
   }
-  if (prog.setsLogged < ex.sets) startRest(ex.restSeconds, ex.name, render);
+  if (prog.setsLogged < ex.sets) {
+    prog.reps = repsForSetIndex(ex, prog.setsLogged); // la próxima serie muestra su propia meta de reps (esquema piramidal)
+    startRest(ex.restSeconds, ex.name, render);
+  }
   render();
 }
 
@@ -282,7 +288,7 @@ function renderWizard(main) {
   }
   if (w.step === 'paste') {
     main.innerHTML = `<h2 class="section-title">Pegar la rutina</h2>
-      <p class="hint">Un ejercicio por línea, con el formato "Ejercicio 4x10 descanso 90s". Los encabezados de día ("Día 1", "Lunes", ...) separan los días.</p>
+      <p class="hint">Un ejercicio por línea, con el formato "Ejercicio 4x10 descanso 90s" (también entiende pirámides: "4x10-8-8-6"). Los encabezados de día ("Día 1", "Lunes", ...) separan los días.</p>
       <textarea class="routine-paste" id="pasteArea" placeholder="${escapeHtml(PASTE_PLACEHOLDER)}"></textarea>
       <button class="btn-primary" style="margin:10px 0" onclick="App.handlePasteText()">Analizar texto</button>
       <button class="btn-danger" onclick="App.cancelWizard()">Cancelar</button>`;
@@ -311,7 +317,7 @@ function renderWizard(main) {
           ${MUSCLE_GROUPS.map(g => `<option value="${g.key}" ${g.key === ex.muscleGroup ? 'selected' : ''}>${g.key}</option>`).join('')}
         </select>
         <input type="number" title="series" value="${ex.sets}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','sets',this.value)">
-        <input type="number" title="reps" value="${ex.reps}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','reps',this.value)">
+        <input type="text" title="reps (ej: 10 o 10-8-8-6)" placeholder="reps" value="${repsSchemeLabel(ex)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','repsScheme',this.value)">
         <input type="number" title="descanso (s)" value="${ex.restSeconds}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','restSeconds',this.value)">
         <button class="icon-btn" onclick="App.wizardRemoveEx('${day.id}','${ex.id}')">✕</button>
       </div>`;
@@ -332,7 +338,7 @@ function wizardAddDay() { routineWizard.days.push({ id: uid(), name: `Día ${rou
 function wizardRemoveDay(id) { routineWizard.days = routineWizard.days.filter(d => d.id !== id); render(); }
 function wizardRenameDay(id, name) { routineWizard.days.find(d => d.id === id).name = name; }
 function wizardAddExercise(dayId) {
-  routineWizard.days.find(d => d.id === dayId).exercises.push({ id: uid(), name: '', muscleGroup: 'Otro', sets: 4, reps: 10, restSeconds: 90 });
+  routineWizard.days.find(d => d.id === dayId).exercises.push({ id: uid(), name: '', muscleGroup: 'Otro', sets: 4, repsScheme: [10], restSeconds: 90 });
   render();
 }
 function wizardRemoveEx(dayId, exId) {
@@ -344,6 +350,7 @@ function wizardUpdateEx(dayId, exId, field, value) {
   const ex = routineWizard.days.find(d => d.id === dayId).exercises.find(e => e.id === exId);
   if (field === 'name') { ex.name = value; if (ex.muscleGroup === 'Otro') ex.muscleGroup = guessMuscleGroup(value); }
   else if (field === 'muscleGroup') ex.muscleGroup = value;
+  else if (field === 'repsScheme') ex.repsScheme = parseRepsSchemeInput(value);
   else ex[field] = parseFloat(value) || 0;
 }
 
@@ -378,7 +385,7 @@ function renderEntrenador(main) {
 
   const flatExercises = [];
   for (const day of routine.days) for (const ex of day.exercises) flatExercises.push({ day, ex });
-  const suggestions = flatExercises.map(({ ex }) => suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.reps }, state.logs, state.settings, info.phase));
+  const suggestions = flatExercises.map(({ ex }) => suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.repsScheme[ex.repsScheme.length - 1] }, state.logs, state.settings, info.phase));
   const overall = overallFatigue(suggestions);
 
   let html = `<h2 class="section-title">Tu entrenador</h2>
@@ -394,7 +401,8 @@ function renderEntrenador(main) {
     if (!day.exercises.length) continue;
     html += `<h2 class="section-title">${escapeHtml(day.name)}</h2>`;
     for (const ex of day.exercises) {
-      const s = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.reps }, state.logs, state.settings, info.phase);
+      const plannedReps = ex.repsScheme[ex.repsScheme.length - 1];
+      const s = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps }, state.logs, state.settings, info.phase);
       const fatigueClass = s.fatigue.replace(' ', '');
       html += `<div class="card suggestion-card">
         <div class="suggestion-head">
@@ -402,7 +410,8 @@ function renderEntrenador(main) {
           <span class="fatigue-tag ${fatigueClass}">Fatiga ${s.fatigue}</span>
         </div>
         <p class="ex-name" style="margin-top:6px">${escapeHtml(ex.name)}</p>
-        ${s.suggestedWeight != null ? `<p class="suggested-weight">${s.suggestedWeight} kg × ${s.suggestedReps || ex.reps}</p>` : ''}
+        <p class="hint" style="margin:2px 0 6px">Reps por serie: ${repsSchemeLabel(ex)}</p>
+        ${s.suggestedWeight != null ? `<p class="suggested-weight">${s.suggestedWeight} kg × ${s.suggestedReps || plannedReps}</p>` : ''}
         <p class="hint" style="margin-bottom:0">${escapeHtml(s.note)}</p>
       </div>`;
     }

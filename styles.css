@@ -155,6 +155,7 @@ button { font-family: var(--font-body); cursor: pointer; }
 .ex-name { font-family: var(--font-display); font-weight: 600; font-size: 17px; letter-spacing: 0.2px; margin: 0 0 2px; }
 .ex-meta { font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px; }
 .ex-meta b { color: var(--text); font-weight: 600; }
+.ex-meta .rep-current { color: var(--accent); font-weight: 700; }
 .coach-hint {
   font-size: 12.5px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px;
   margin-bottom: 12px; line-height: 1.4;

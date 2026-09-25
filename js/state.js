@@ -58,7 +58,7 @@ function migrateLegacy() {
           name: e.name,
           muscleGroup: 'Otro',
           sets: e.sets || 3,
-          reps: e.reps || 10,
+          repsScheme: [e.reps || 10],
           restSeconds: e.rest || 90,
         })),
       })),
@@ -151,6 +151,28 @@ export function findExercise(state, routineId, dayId, exId) {
   const routine = getRoutine(state, routineId);
   const day = routine?.days.find(d => d.id === dayId);
   return day?.exercises.find(e => e.id === exId) || null;
+}
+
+/**
+ * Esquema de repeticiones por ejercicio: un array, una cifra por serie
+ * (ej. [10, 8, 8, 6] para una pirámide descendente). Si hay menos cifras
+ * que series, la última se repite para las series que faltan.
+ */
+export function repsForSetIndex(ex, setIndex) {
+  const scheme = ex.repsScheme && ex.repsScheme.length ? ex.repsScheme : [10];
+  return scheme[Math.min(setIndex, scheme.length - 1)];
+}
+
+/** Etiqueta legible del esquema: "10" si es uniforme, "10-8-8-6" si varía. */
+export function repsSchemeLabel(ex) {
+  const scheme = ex.repsScheme && ex.repsScheme.length ? ex.repsScheme : [10];
+  return scheme.length > 1 ? scheme.join('-') : String(scheme[0]);
+}
+
+/** Convierte lo que se tipeó en el formulario ("10" o "10-8-8-6") en un array de reps válido. */
+export function parseRepsSchemeInput(text) {
+  const nums = String(text).split(/[^0-9]+/).filter(Boolean).map(n => parseInt(n, 10)).filter(n => n > 0);
+  return nums.length ? nums : [10];
 }
 
 export function exportBackup(state) {
