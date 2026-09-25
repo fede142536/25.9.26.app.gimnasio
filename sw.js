@@ -3,17 +3,18 @@
  * conexión (todo el "backend" es este mismo dispositivo — los datos ya
  * viven en localStorage, esto solo cachea los archivos de la app).
  *
- * Estrategia "stale-while-revalidate" para los archivos propios: sirve
- * primero lo que hay en caché (carga instantánea, funciona offline) y en
- * paralelo pide la versión de red para actualizar la caché para la
- * próxima vez — así no hace falta acordarse de subir un número de
+ * Estrategia "red primero" para los archivos propios: con conexión
+ * siempre se carga la última versión publicada (un arreglo llega en la
+ * primera apertura, no en la segunda) y se guarda en caché; sin conexión,
+ * o si la red tarda más de NETWORK_TIMEOUT_MS (señal débil en el
+ * gimnasio), se usa la copia guardada. No hace falta subir un número de
  * versión a mano cada vez que se cambia el código.
  *
- * No se intercepta nada de otro origen (fuentes de Google, etc.): si no
- * hay conexión simplemente no cargan, pero la app funciona igual.
+ * No se intercepta nada de otro origen.
  */
 
-const CACHE_NAME = 'gimnasio-shell-v1';
+const CACHE_NAME = 'gimnasio-shell-v2';
+const NETWORK_TIMEOUT_MS = 3000;
 
 const CORE_ASSETS = [
   './',
@@ -27,6 +28,9 @@ const CORE_ASSETS = [
   './js/coach.js',
   './js/timer.js',
   './js/charts.js',
+  './js/icons.js',
+  './fonts/inter-variable-latin.woff2',
+  './fonts/oswald-variable-latin.woff2',
   './js/vendor/mammoth.browser.min.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -54,11 +58,18 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
-      const cached = await cache.match(event.request);
-      const network = fetch(event.request)
-        .then((response) => { if (response.ok) cache.put(event.request, response.clone()); return response; })
-        .catch(() => cached);
-      return cached || network;
+      const network = fetch(event.request).then((response) => {
+        if (response.ok) cache.put(event.request, response.clone());
+        return response;
+      });
+      network.catch(() => { /* el rechazo se maneja abajo; evita el aviso de promesa sin capturar */ });
+      const timeout = new Promise((resolve) => setTimeout(resolve, NETWORK_TIMEOUT_MS));
+      try {
+        const response = await Promise.race([network, timeout]);
+        if (response) return response;
+      } catch (e) { /* sin conexión: seguimos con la caché */ }
+      const cached = await cache.match(event.request, { ignoreSearch: true });
+      return cached || network; // sin copia guardada, esperamos a la red aunque tarde
     })
   );
 });

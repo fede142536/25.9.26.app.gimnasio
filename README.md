@@ -50,6 +50,10 @@ js/parser.js        importar rutina desde Word/texto (heurístico)
 js/coach.js         periodización, progresión de carga, fatiga
 js/timer.js         temporizador de descanso
 js/charts.js        gráficos SVG (línea y barras) sin librerías externas
+js/icons.js         íconos SVG inline
+js/vendor/          mammoth.js (lectura de .docx), incluida en el repo
+fonts/              Inter y Oswald (OFL), incluidas para que funcionen sin conexión
+sw.js, manifest.json  PWA: instalable y offline
 js/main.js          router de pestañas + todas las vistas
 ```
 

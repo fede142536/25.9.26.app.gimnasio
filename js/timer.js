@@ -32,6 +32,14 @@ export function skipRest(onTick) {
   onTick();
 }
 
+/** Suma (o resta, con un valor negativo) segundos al descanso en curso. */
+export function addRestTime(seconds, onTick) {
+  if (!restTimer.active) return;
+  restTimer.secondsLeft = Math.max(1, restTimer.secondsLeft + seconds);
+  restTimer.total = Math.max(restTimer.total, restTimer.secondsLeft);
+  onTick();
+}
+
 /** Beep corto con Web Audio API, sin archivos externos. */
 function playBeep() {
   try {

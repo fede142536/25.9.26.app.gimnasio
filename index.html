@@ -8,35 +8,40 @@
 
 <!-- PWA: se instala como app (ícono propio, pantalla completa) y funciona sin conexión -->
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#B4790A">
+<meta name="theme-color" content="#F2F3F5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Gimnasio">
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Fuentes incluidas en la app (ver styles.css): se precargan para evitar el salto de tipografía -->
+<link rel="preload" href="fonts/oswald-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
-    <h1>Gimnasio</h1>
-    <div class="header-actions">
-      <span class="date" id="todayLabel"></span>
-      <button class="icon-btn-round" id="settingsBtn" title="Configuración y respaldo">⚙️</button>
+    <div class="brand">
+      <span class="brand-mark" data-icon="dumbbell"></span>
+      <div>
+        <h1>Gimnasio</h1>
+        <span class="date" id="todayLabel"></span>
+      </div>
     </div>
+    <button class="icon-btn-round" id="settingsBtn" title="Configuración y respaldo" aria-label="Configuración y respaldo" data-icon="sliders"></button>
   </header>
-  <button id="installBtn" class="install-banner" hidden>⬇️ Instalar la app en este dispositivo</button>
+  <button id="installBtn" class="install-banner" hidden>Instalar la app en este dispositivo</button>
   <main id="main"></main>
+  <div id="restHost"></div>
   <nav class="tabbar">
-    <button data-view="hoy" class="active">Hoy</button>
-    <button data-view="rutinas">Rutinas</button>
-    <button data-view="entrenador">Entrenador</button>
-    <button data-view="progreso">Progreso</button>
+    <button data-view="hoy" class="active"><span class="tab-icon" data-icon="dumbbell"></span>Hoy</button>
+    <button data-view="rutinas"><span class="tab-icon" data-icon="list"></span>Rutinas</button>
+    <button data-view="entrenador"><span class="tab-icon" data-icon="trend"></span>Entrenador</button>
+    <button data-view="progreso"><span class="tab-icon" data-icon="chart"></span>Progreso</button>
   </nav>
 </div>
 <div id="modalHost"></div>

@@ -6,7 +6,8 @@ import {
 import { MUSCLE_GROUPS, muscleGroupClass, guessMuscleGroup, slotFor } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, PASTE_PLACEHOLDER } from './parser.js';
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue } from './coach.js';
-import { restTimer, startRest, skipRest } from './timer.js';
+import { restTimer, startRest, skipRest, addRestTime } from './timer.js';
+import { icon } from './icons.js';
 import { lineChart, barChart } from './charts.js';
 
 let state = loadState();
@@ -18,14 +19,17 @@ let progressGroup = null;
 let progressExKey = null;
 let routineWizard = null; // asistente de creación/edición de rutina
 let modalView = null;     // 'settings' | null
+let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no, el primero sin completar)
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.1';
+const APP_VERSION = '2026-09-25.2';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
 function persist() { saveState(state); }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+/** 'YYYY-MM-DD' → '16/10/2026' */
+function formatDate(iso) { const [y, m, d] = String(iso).split('-'); return d ? `${d}/${m}/${y}` : iso; }
 function formatToday() { const d = new Date(); return `${WEEKDAY_LABELS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function seriesVarFor(muscleGroup) { const slot = slotFor(muscleGroup) || 1; return `--series-${slot}`; }
 
@@ -34,6 +38,8 @@ function seriesVarFor(muscleGroup) { const slot = slotFor(muscleGroup) || 1; ret
    por el id del ejercicio dentro de una rutina puntual)
    ================================================================ */
 
+/** Series de días anteriores: el entrenador sugiere en base a la última sesión completa, no a la serie que acabás de hacer hoy. */
+function historyLogs() { const today = todayISO(); return state.logs.filter(l => l.date !== today); }
 function logsForKey(key) { return state.logs.filter(l => l.exerciseKey === key); }
 function lastWeightFor(key) {
   const entries = logsForKey(key).sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
@@ -55,6 +61,7 @@ function render() {
   else if (currentView === 'entrenador') renderEntrenador(main);
   else renderProgreso(main);
   renderModal();
+  renderRestBar();
 }
 
 function switchTab(view) { currentView = view; render(); }
@@ -67,76 +74,188 @@ function getSelectedDay() {
   return routine.days.find(d => d.id === state.selectedDayId) || routine.days[0] || null;
 }
 
+/** Número con coma decimal, como se escribe en Argentina (42,5). */
+function fmtNum(n) { return String(n).replace('.', ','); }
+function formatKg(w) { return w > 0 ? `${fmtNum(w)} kg` : 'Peso corporal'; }
+
+function emptyState(iconName, title, text, actionHtml = '') {
+  return `<div class="empty"><div class="empty-icon">${icon(iconName)}</div><h3>${title}</h3><p>${text}</p>${actionHtml}</div>`;
+}
+
+/** "Día 1 - Pecho Hombro Triceps" → pestaña "Día 1", título "Pecho Hombro Triceps". */
+function dayShortLabel(day, idx) {
+  const m = day.name.match(/^(d[ií]a\s*[a-z0-9]+)/i);
+  return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) : `Día ${idx + 1}`;
+}
+function dayTitle(day) {
+  const parts = day.name.split(/\s+[-–—:]\s+/);
+  return parts.length > 1 ? parts.slice(1).join(' · ') : day.name;
+}
+
+/** Series ya registradas hoy para un ejercicio: así el progreso del día sobrevive a cerrar la app. */
+function todayLogsFor(dayId, exId) {
+  const today = todayISO();
+  return state.logs
+    .filter(l => l.date === today && l.dayId === dayId && l.exerciseId === exId)
+    .sort((a, b) => a.setNumber - b.setNumber || a.ts - b.ts);
+}
+
 function renderHoy(main) {
   const routine = getActiveRoutine(state);
   if (!routine) {
-    main.innerHTML = `<div class="empty">Todavía no cargaste ninguna rutina.<br><br>
-      <button class="btn-primary" style="width:auto;padding:10px 18px" onclick="App.switchTab('rutinas')">Cargar mi rutina</button></div>`;
+    main.innerHTML = emptyState('dumbbell', 'Arranquemos',
+      'Cargá la rutina que te armó tu entrenador y empezá a registrar tus series.',
+      `<button class="btn-primary" onclick="App.switchTab('rutinas')">${icon('upload')} Cargar mi rutina</button>`);
     return;
   }
   const day = getSelectedDay();
   const info = weekInfo(routine, todayISO(), state.settings);
 
-  let html = '';
-  if (restTimer.active) {
-    const m = String(Math.floor(restTimer.secondsLeft / 60)).padStart(2, '0');
-    const s = String(restTimer.secondsLeft % 60).padStart(2, '0');
-    html += `<div class="rest-bar"><span>Descanso · ${escapeHtml(restTimer.exerciseName)} · ${m}:${s}</span>
-      <button onclick="App.skipRest()">Saltar</button></div>`;
-  }
-
-  html += `<select class="day-select" onchange="App.selectDay(this.value)">
-    ${routine.days.map(d => `<option value="${d.id}" ${d.id === day.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
-  </select>`;
-
-  if (!day.exercises.length) {
-    html += `<div class="empty">Este día todavía no tiene ejercicios cargados.</div>`;
-  }
-
-  for (const ex of day.exercises) {
+  const rows = day.exercises.map((ex) => {
     const key = normalizeName(ex.name);
     const plannedReps = ex.repsScheme[ex.repsScheme.length - 1]; // la serie más pesada del esquema, la que manda para progresar
-    const suggestion = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps }, state.logs, state.settings, info.phase);
-
+    const suggestion = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps }, historyLogs(), state.settings, info.phase);
+    const logged = todayLogsFor(day.id, ex.id);
     if (!todaySets[ex.id]) {
-      const defaultWeight = suggestion.suggestedWeight != null ? suggestion.suggestedWeight : (lastWeightFor(key) ?? 0);
-      todaySets[ex.id] = { setsLogged: 0, weight: defaultWeight, reps: repsForSetIndex(ex, 0) };
+      const lastToday = logged[logged.length - 1];
+      const defaultWeight = lastToday ? lastToday.weight
+        : suggestion.suggestedWeight != null ? suggestion.suggestedWeight : (lastWeightFor(key) ?? 0);
+      todaySets[ex.id] = { setsLogged: logged.length, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length), pr: null };
     }
     const prog = todaySets[ex.id];
-    const done = prog.setsLogged >= ex.sets;
-    const last = lastWeightFor(key);
-    const dots = Array.from({ length: ex.sets }, (_, i) => `<span class="dot ${i < prog.setsLogged ? 'filled' : ''}"></span>`).join('');
-    const schemeRow = Array.from({ length: ex.sets }, (_, i) => `<span class="${i === prog.setsLogged && !done ? 'rep-current' : ''}">${repsForSetIndex(ex, i)}</span>`).join(' · ');
+    return { ex, key, suggestion, logged, prog, done: prog.setsLogged >= ex.sets };
+  });
 
-    html += `<div class="card ${done ? 'done' : ''}">
-      <div class="chip-row" style="margin-bottom:6px">
-        <span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>
+  const totalSets = day.exercises.reduce((a, ex) => a + ex.sets, 0);
+  const doneSets = rows.reduce((a, r) => a + Math.min(r.prog.setsLogged, r.ex.sets), 0);
+  const pct = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
+  const focused = rows.find(r => r.ex.id === focusedExId && !r.done);
+  const current = focused || rows.find(r => !r.done) || null;
+
+  let html = `<section class="session-hero">
+    <div class="day-tabs" role="tablist">
+      ${routine.days.map((d, i) => `<button class="day-tab ${d.id === day.id ? 'active' : ''}" role="tab" aria-selected="${d.id === day.id}" onclick="App.selectDay('${d.id}')">${escapeHtml(dayShortLabel(d, i))}</button>`).join('')}
+    </div>
+    <div class="hero-row">
+      <div>
+        <h2 class="hero-title">${escapeHtml(dayTitle(day))}</h2>
+        <div class="hero-sub">${day.exercises.length} ejercicios · ${escapeHtml(routine.name)}</div>
       </div>
-      <p class="ex-name">${escapeHtml(ex.name)}</p>
-      <p class="ex-meta">${ex.sets} series · reps por serie: ${schemeRow} · descanso ${ex.restSeconds}s
-        ${last != null ? ` · última vez: <b>${last} kg</b>` : ''}</p>
-      ${suggestion.suggestedWeight != null ? `<p class="coach-hint">Sugerido hoy: <b>${suggestion.suggestedWeight} kg</b><br>${escapeHtml(suggestion.note)}</p>` : `<p class="coach-hint">${escapeHtml(suggestion.note)}</p>`}
-      <div class="weight-row">
-        <button class="stepper-btn" onclick="App.adjustWeight('${ex.id}', -2.5)">−</button>
-        <input class="weight-value" type="number" step="0.5" value="${prog.weight}" oninput="App.setWeight('${ex.id}', this.value)">
-        <button class="stepper-btn" onclick="App.adjustWeight('${ex.id}', 2.5)">+</button>
-      </div>
-      <p class="weight-unit">kg</p>
-      <div class="reps-row"><span>Reps de esta serie:</span><input type="number" value="${prog.reps}" oninput="App.setReps('${ex.id}', this.value)"></div>
-      <div class="set-dots">${dots}</div>
-      <button class="btn-primary" ${done ? 'disabled' : ''} onclick="App.logSet('${ex.id}', '${day.id}')">
-        ${done ? 'Ejercicio completo' : `Registrar serie ${prog.setsLogged + 1} / ${ex.sets}`}
-      </button>
-      <div id="pr-${ex.id}"></div>
-    </div>`;
+      <span class="phase-pill ${info.phase}">Sem ${info.weekInBlock}/${state.settings.mesocycleWeeks} · ${info.phase === 'descarga' ? 'Descarga' : 'Carga'}</span>
+    </div>
+    ${totalSets ? `<div class="progress-wrap">
+      <div class="progress-label"><span>Progreso de hoy</span><span><b>${doneSets}</b> de ${totalSets} series</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+    </div>` : ''}
+  </section>`;
+
+  if (!day.exercises.length) {
+    html += emptyState('list', 'Día sin ejercicios', 'Agregalos desde la pestaña Rutinas → Editar.');
+  } else if (!current) {
+    html += `<div class="day-done"><h3>¡Día completo!</h3>Registraste las ${totalSets} series. Buen entrenamiento.</div>`;
   }
+
+  rows.forEach((r, i) => { html += exerciseCardHtml(r, i, r === current, day.id); });
   main.innerHTML = html;
 }
 
-function selectDay(id) { state.selectedDayId = id; todaySets = {}; persist(); render(); }
+function exerciseCardHtml(r, index, isCurrent, dayId) {
+  const { ex, key, suggestion, logged, prog, done } = r;
+  const last = lastWeightFor(key);
+  const state_ = done ? 'done' : isCurrent ? 'current' : '';
+
+  const pills = Array.from({ length: ex.sets }, (_, s) => {
+    const l = logged[s];
+    if (l) return `<div class="set-pill done"><span class="set-n">S${s + 1}</span><b>${l.weight > 0 ? fmtNum(l.weight) : '—'}</b><small>${l.weight > 0 ? 'kg ' : ''}× ${l.reps}</small></div>`;
+    const cls = isCurrent && s === prog.setsLogged ? 'current' : '';
+    return `<div class="set-pill ${cls}"><span class="set-n">S${s + 1}</span><b>${repsForSetIndex(ex, s)}</b><small>reps</small></div>`;
+  }).join('');
+
+  const head = `<div class="ex-head">
+      <span class="ex-index">${done ? icon('check') : index + 1}</span>
+      <div class="ex-title">
+        <p class="ex-name">${escapeHtml(ex.name)}</p>
+        <div class="ex-sub">
+          <span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>
+          <span class="meta">${icon('clock')}${ex.restSeconds}s</span>
+          ${last != null && !done ? `<span class="meta">${icon('history')}${formatKg(last)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  const prBadge = prog.pr ? `<div class="pr-badge">${icon('trophy')} Nuevo récord: ${formatKg(prog.pr)}</div>` : '';
+
+  if (!isCurrent) {
+    const tap = done ? '' : ` onclick="App.focusExercise('${ex.id}')" style="cursor:pointer"`;
+    return `<article class="ex-card ${state_}"${tap}>${head}<div class="set-track">${pills}</div>${prBadge}</article>`;
+  }
+
+  const sw = suggestion.suggestedWeight;
+  const coach = sw != null
+    ? `<div class="coach-line">${icon('bolt')}
+        <div class="coach-text">Sugerido: <b>${formatKg(sw)}</b><small>${escapeHtml(suggestion.note)}</small></div>
+        ${sw !== prog.weight ? `<button class="btn-chip" onclick="App.useSuggestion('${ex.id}', ${sw})">Usar</button>` : ''}
+      </div>`
+    : `<div class="coach-line">${icon('bolt')}<div class="coach-text"><small style="margin:0">${escapeHtml(suggestion.note)}</small></div></div>`;
+
+  return `<article class="ex-card current" id="ex-${ex.id}">
+    ${head}
+    <div class="set-track">${pills}</div>
+    ${coach}
+    <div class="input-grid">
+      <div class="stepper">
+        <div class="stepper-label">Peso · kg</div>
+        <div class="stepper-row">
+          <button class="stepper-btn" aria-label="Bajar peso" onclick="App.adjustWeight('${ex.id}', -2.5)">−</button>
+          <input class="stepper-value" type="text" inputmode="decimal" autocomplete="off" aria-label="Peso en kg" value="${fmtNum(prog.weight)}" onfocus="this.select()" oninput="App.setWeight('${ex.id}', this.value)">
+          <button class="stepper-btn" aria-label="Subir peso" onclick="App.adjustWeight('${ex.id}', 2.5)">+</button>
+        </div>
+      </div>
+      <div class="stepper">
+        <div class="stepper-label">Reps</div>
+        <div class="stepper-row">
+          <button class="stepper-btn" aria-label="Menos reps" onclick="App.adjustReps('${ex.id}', -1)">−</button>
+          <input class="stepper-value" type="text" inputmode="numeric" autocomplete="off" aria-label="Repeticiones" value="${prog.reps}" onfocus="this.select()" oninput="App.setReps('${ex.id}', this.value)">
+          <button class="stepper-btn" aria-label="Más reps" onclick="App.adjustReps('${ex.id}', 1)">+</button>
+        </div>
+      </div>
+    </div>
+    <button class="btn-primary" onclick="App.logSet('${ex.id}', '${dayId}')">${icon('check')} Registrar serie ${prog.setsLogged + 1} de ${ex.sets}</button>
+    ${prBadge}
+  </article>`;
+}
+
+/** Timer de descanso: se dibuja aparte (no redibuja la pantalla, así no se pierde lo que estás tipeando). */
+function renderRestBar() {
+  const host = document.getElementById('restHost');
+  if (!restTimer.active) { host.innerHTML = ''; return; }
+  const m = Math.floor(restTimer.secondsLeft / 60);
+  const s = String(restTimer.secondsLeft % 60).padStart(2, '0');
+  const pct = (restTimer.secondsLeft / restTimer.total) * 100;
+  const existing = host.querySelector('.rest-float');
+  if (existing) {
+    existing.querySelector('.rest-time').textContent = `${m}:${s}`;
+    existing.querySelector('.rest-progress').style.width = `${pct}%`;
+    return;
+  }
+  host.innerHTML = `<div class="rest-float" role="timer" aria-live="off">
+    <div class="rest-progress" style="width:${pct}%"></div>
+    <div class="rest-inner">
+      <span class="rest-time">${m}:${s}</span>
+      <span class="rest-label">Descanso<b>${escapeHtml(restTimer.exerciseName)}</b></span>
+      <button onclick="App.addRest(15)">+15s</button>
+      <button class="primary" onclick="App.skipRest()">Saltar</button>
+    </div>
+  </div>`;
+}
+
+function selectDay(id) { state.selectedDayId = id; todaySets = {}; focusedExId = null; persist(); render(); }
+function focusExercise(id) { focusedExId = id; render(); document.getElementById(`ex-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 function adjustWeight(exId, delta) { todaySets[exId].weight = Math.max(0, Math.round((todaySets[exId].weight + delta) * 2) / 2); render(); }
-function setWeight(exId, value) { todaySets[exId].weight = parseFloat(value) || 0; }
-function setReps(exId, value) { todaySets[exId].reps = parseInt(value, 10) || 0; }
+function adjustReps(exId, delta) { todaySets[exId].reps = Math.max(0, todaySets[exId].reps + delta); render(); }
+function useSuggestion(exId, weight) { todaySets[exId].weight = weight; render(); }
+/** Acepta coma o punto decimal ("42,5" o "42.5"); no redibuja para no interrumpir lo que se está escribiendo. */
+function setWeight(exId, value) { todaySets[exId].weight = Math.max(0, parseFloat(String(value).replace(',', '.')) || 0); }
+function setReps(exId, value) { todaySets[exId].reps = Math.max(0, parseInt(value, 10) || 0); }
 
 function logSet(exId, dayId) {
   const routine = getActiveRoutine(state);
@@ -154,17 +273,19 @@ function logSet(exId, dayId) {
     weekNumber: info.weekNumber, weekInBlock: info.weekInBlock, phase: info.phase,
   });
   prog.setsLogged++;
+  if (prog.weight > 0 && prog.weight > wasMax) prog.pr = prog.weight;
   persist();
 
-  if (prog.weight > wasMax) {
-    const el = document.getElementById(`pr-${exId}`);
-    if (el) el.innerHTML = `<p class="pr-badge">Nuevo PR: ${prog.weight} kg</p>`;
-  }
-  if (prog.setsLogged < ex.sets) {
+  const finished = prog.setsLogged >= ex.sets;
+  if (!finished) {
     prog.reps = repsForSetIndex(ex, prog.setsLogged); // la próxima serie muestra su propia meta de reps (esquema piramidal)
-    startRest(ex.restSeconds, ex.name, render);
+    startRest(ex.restSeconds, ex.name, renderRestBar);
+  } else {
+    focusedExId = null;
+    skipRest(renderRestBar);
   }
   render();
+  if (finished) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 /* ================================================================ Vista: Rutinas ================================================================ */
@@ -178,30 +299,32 @@ function summaryChipsForRoutine(routine) {
 function renderRutinas(main) {
   if (routineWizard) { renderWizard(main); return; }
 
-  let html = `<h2 class="section-title">Tus rutinas</h2>
-    <p class="hint">Cargá una rutina distinta cada vez que tu entrenador te la cambie (cada ~3 meses): el historial y tu progreso se guardan igual, aunque cambies de rutina.</p>`;
-
+  let html = '';
   if (!state.routines.length) {
-    html += `<div class="empty">Todavía no cargaste ninguna rutina.</div>`;
+    html += emptyState('list', 'Sin rutinas todavía',
+      'Subí el Word que te pasó tu entrenador, pegá el texto o armala a mano. Cuando te cambien la rutina, cargás una nueva y tu progreso se mantiene.');
+  } else {
+    html += `<h2 class="section-title">Tus rutinas</h2>`;
   }
 
   for (const r of state.routines) {
     const active = r.id === state.activeRoutineId;
     const exCount = r.days.reduce((a, d) => a + d.exercises.length, 0);
-    html += `<div class="card routine-card">
+    html += `<div class="card routine-card ${active ? 'active' : ''}">
       ${active ? '<span class="badge-active">Activa</span>' : ''}
       <h3>${escapeHtml(r.name)}</h3>
-      <p class="sub">Desde ${r.startDate} · ${r.days.length} días · ${exCount} ejercicios</p>
+      <p class="sub">Desde el ${formatDate(r.startDate)} · ${r.days.length} días · ${exCount} ejercicios</p>
       <div class="chip-row">${summaryChipsForRoutine(r)}</div>
       <div class="btn-row">
         ${active ? '' : `<button class="btn-secondary" onclick="App.activateRoutine('${r.id}')">Activar</button>`}
         <button class="btn-secondary" onclick="App.editRoutine('${r.id}')">Editar</button>
       </div>
-      <div style="text-align:right;margin-top:6px"><button class="btn-danger" onclick="App.deleteRoutine('${r.id}')">Eliminar rutina</button></div>
+      <div class="card-footer"><button class="btn-danger" onclick="App.deleteRoutine('${r.id}')">Eliminar rutina</button></div>
     </div>`;
   }
 
-  html += `<button class="add-day-btn" onclick="App.startNewRoutine()">+ Nueva rutina</button>`;
+  html += `<button class="btn-primary" style="margin-top:4px" onclick="App.startNewRoutine()">${icon('plus')} Nueva rutina</button>
+    <p class="hint" style="text-align:center;margin-top:12px">El historial se guarda por ejercicio: aunque cambies de rutina cada 3 meses, tu progreso sigue.</p>`;
   main.innerHTML = html;
 }
 
@@ -271,11 +394,15 @@ function handlePasteText() {
 function renderWizard(main) {
   const w = routineWizard;
   if (w.step === 'method') {
-    main.innerHTML = `<h2 class="section-title">¿Cómo querés cargar la rutina?</h2>
-      <button class="btn-secondary" style="margin-bottom:8px" onclick="App.chooseMethod('upload')">📄 Subir archivo Word (.docx)</button>
-      <button class="btn-secondary" style="margin-bottom:8px" onclick="App.chooseMethod('paste')">✏️ Pegar el texto de la rutina</button>
-      <button class="btn-secondary" style="margin-bottom:8px" onclick="App.chooseMethod('manual')">➕ Crearla a mano</button>
-      <button class="btn-danger" onclick="App.cancelWizard()">Cancelar</button>`;
+    const method = (key, iconName, title, text) => `<button class="method-btn" onclick="App.chooseMethod('${key}')">
+      <span class="method-icon">${icon(iconName)}</span><span><b>${title}</b><span>${text}</span></span></button>`;
+    main.innerHTML = `<h2 class="section-title">Nueva rutina</h2>
+      <div class="method-list">
+        ${method('upload', 'upload', 'Subir archivo Word', 'El .docx que te pasó tu entrenador. Se lee en tu celular, no se sube a ningún lado.')}
+        ${method('paste', 'paste', 'Pegar el texto', 'Copiá la rutina de un mensaje o nota. Funciona sin conexión.')}
+        ${method('manual', 'plus', 'Crearla a mano', 'Agregá días y ejercicios uno por uno.')}
+      </div>
+      <button class="btn-secondary" onclick="App.cancelWizard()">Cancelar</button>`;
     return;
   }
   if (w.step === 'upload') {
@@ -381,44 +508,53 @@ function saveWizard() {
 
 function renderEntrenador(main) {
   const routine = getActiveRoutine(state);
-  if (!routine) { main.innerHTML = `<div class="empty">Cargá una rutina para que pueda armarte un plan de progresión.</div>`; return; }
+  if (!routine) { main.innerHTML = emptyState('trend', 'Tu entrenador', 'Cargá una rutina y te armo un plan de progresión con semanas de carga y de descarga.'); return; }
 
   const info = weekInfo(routine, todayISO(), state.settings);
   const deload = nextDeloadDate(routine, state.settings, todayISO());
+  const weeks = state.settings.mesocycleWeeks;
 
-  const flatExercises = [];
-  for (const day of routine.days) for (const ex of day.exercises) flatExercises.push({ day, ex });
-  const suggestions = flatExercises.map(({ ex }) => suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.repsScheme[ex.repsScheme.length - 1] }, state.logs, state.settings, info.phase));
-  const overall = overallFatigue(suggestions);
+  const perDay = routine.days.map(day => ({
+    day,
+    items: day.exercises.map(ex => ({
+      ex,
+      s: suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps: ex.repsScheme[ex.repsScheme.length - 1] }, historyLogs(), state.settings, info.phase),
+    })),
+  }));
+  const overall = overallFatigue(perDay.flatMap(d => d.items.map(i => i.s)));
 
-  let html = `<h2 class="section-title">Tu entrenador</h2>
-    <div class="card">
-      <span class="phase-pill ${info.phase}">Semana ${info.weekInBlock} de ${state.settings.mesocycleWeeks} · ${info.phase === 'descarga' ? 'Descarga' : 'Carga'}</span>
-      <p class="hint" style="margin-top:8px">Bloque #${info.blockNumber} · semana ${info.weekNumber} desde que empezaste esta rutina.
-        ${info.phase === 'carga' ? `Próxima descarga: <b>${deload}</b>.` : 'Esta semana bajá intensidad y priorizá la recuperación.'}</p>
+  const segs = Array.from({ length: weeks }, (_, i) => {
+    const w = i + 1;
+    const cls = [w < info.weekInBlock ? 'past' : '', w === info.weekInBlock ? 'now' : '', w === weeks ? 'deload' : ''].join(' ');
+    return `<div class="week-seg ${cls}"><div class="bar"></div><span>${w === weeks ? 'Descarga' : `Sem ${w}`}</span></div>`;
+  }).join('');
+
+  let html = `<div class="card coach-hero" style="margin-top:4px">
+      <span class="phase-pill ${info.phase}">${icon(info.phase === 'descarga' ? 'flag' : 'bolt')} ${info.phase === 'descarga' ? 'Semana de descarga' : 'Semana de carga'}</span>
+      <div class="week-track">${segs}</div>
+      <p class="hint" style="margin-bottom:0">Bloque ${info.blockNumber} · semana ${info.weekNumber} de esta rutina.
+        ${info.phase === 'carga' ? `Próxima descarga: <b>${formatDate(deload)}</b>.` : 'Bajá la intensidad y priorizá recuperar.'}</p>
       <div class="fatigue-meter"><span class="fatigue-dot ${overall.level.replace(' ', '')}"></span><span>${escapeHtml(overall.label)}</span></div>
-      <p class="hint">Sugerencias automáticas según tu historial de series. No reemplazan a un profesional — ajustalas si algo no te cierra.</p>
     </div>`;
 
-  for (const day of routine.days) {
-    if (!day.exercises.length) continue;
-    html += `<h2 class="section-title">${escapeHtml(day.name)}</h2>`;
-    for (const ex of day.exercises) {
+  for (const { day, items } of perDay) {
+    if (!items.length) continue;
+    html += `<div class="card flush"><h3 class="card-title">${escapeHtml(day.name)}</h3><div class="coach-list">`;
+    for (const { ex, s: sug } of items) {
       const plannedReps = ex.repsScheme[ex.repsScheme.length - 1];
-      const s = suggestForExercise({ exerciseName: ex.name, muscleGroup: ex.muscleGroup, plannedReps }, state.logs, state.settings, info.phase);
-      const fatigueClass = s.fatigue.replace(' ', '');
-      html += `<div class="card suggestion-card">
-        <div class="suggestion-head">
-          <span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>
-          <span class="fatigue-tag ${fatigueClass}">Fatiga ${s.fatigue}</span>
+      html += `<div class="coach-row">
+        <span class="fatigue-dot ${sug.fatigue.replace(' ', '')}" title="Fatiga ${sug.fatigue}"></span>
+        <div class="cr-main">
+          <div class="cr-name">${escapeHtml(ex.name)}</div>
+          <div class="cr-meta"><span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>${ex.sets} × ${repsSchemeLabel(ex)}</div>
+          <div class="cr-note">${escapeHtml(sug.note)}</div>
         </div>
-        <p class="ex-name" style="margin-top:6px">${escapeHtml(ex.name)}</p>
-        <p class="hint" style="margin:2px 0 6px">Reps por serie: ${repsSchemeLabel(ex)}</p>
-        ${s.suggestedWeight != null ? `<p class="suggested-weight">${s.suggestedWeight} kg × ${s.suggestedReps || plannedReps}</p>` : ''}
-        <p class="hint" style="margin-bottom:0">${escapeHtml(s.note)}</p>
+        ${sug.suggestedWeight != null ? `<div class="cr-target"><b>${sug.suggestedWeight > 0 ? fmtNum(sug.suggestedWeight) : 'PC'}</b><small>${sug.suggestedWeight > 0 ? 'kg' : 'peso corp.'} · ${sug.suggestedReps || plannedReps} reps</small></div>` : ''}
       </div>`;
     }
+    html += `</div></div>`;
   }
+  html += `<p class="hint" style="text-align:center">Sugerencias automáticas según tu historial. No reemplazan a un profesional: ajustalas si algo no te cierra.</p>`;
   main.innerHTML = html;
 }
 
@@ -461,9 +597,9 @@ function weightSeriesForExercise(key) {
 }
 
 function renderProgreso(main) {
-  if (!state.logs.length) { main.innerHTML = `<div class="empty">Cuando registres series en la pestaña <b>Hoy</b>, vas a ver acá tu progreso histórico.</div>`; return; }
+  if (!state.logs.length) { main.innerHTML = emptyState('chart', 'Tu progreso', 'Cuando registres series en la pestaña Hoy, acá vas a ver la evolución de cada ejercicio y grupo muscular.'); return; }
 
-  let html = `<div class="import-tabs">
+  let html = `<div class="segmented" style="margin-top:4px">
     <button class="${progressMode === 'grupo' ? 'active' : ''}" onclick="App.setProgressMode('grupo')">Por grupo muscular</button>
     <button class="${progressMode === 'ejercicio' ? 'active' : ''}" onclick="App.setProgressMode('ejercicio')">Por ejercicio</button>
   </div>`;
@@ -611,7 +747,8 @@ async function runInstallDiagnostics() {
 /* ================================================================ Init ================================================================ */
 
 window.App = {
-  switchTab, selectDay, adjustWeight, setWeight, setReps, logSet, skipRest: () => skipRest(render),
+  switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, logSet,
+  skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
   wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, saveWizard,
@@ -620,6 +757,7 @@ window.App = {
   runInstallDiagnostics,
 };
 
+document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 document.querySelectorAll('nav.tabbar button').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.view)));
 document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
 
