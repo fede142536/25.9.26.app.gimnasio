@@ -8,7 +8,7 @@ import { extractTextFromDocx, parseRoutineText, PASTE_PLACEHOLDER } from './pars
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek } from './coach.js';
 import { restTimer, startRest, skipRest, addRestTime } from './timer.js';
 import { icon } from './icons.js';
-import { lineChart, barChart } from './charts.js';
+import { lineChart } from './charts.js';
 
 let state = loadState();
 let currentView = 'hoy';
@@ -22,7 +22,7 @@ let modalView = null;     // 'settings' | null
 let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no, el primero sin completar)
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.3';
+const APP_VERSION = '2026-09-25.4';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -585,40 +585,61 @@ function setCurrentWeek(weekInBlock) {
 
 /* ================================================================ Vista: Progreso ================================================================ */
 
-function distinctGroupsLogged() { return Array.from(new Set(state.logs.map(l => l.muscleGroup))); }
+function distinctGroupsLogged() {
+  const order = MUSCLE_GROUPS.map(g => g.key);
+  return Array.from(new Set(state.logs.map(l => l.muscleGroup))).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
 function distinctExercisesLogged() {
   const map = new Map();
   for (const l of state.logs.slice().sort((a, b) => a.ts - b.ts)) map.set(l.exerciseKey, { key: l.exerciseKey, name: l.exerciseName, muscleGroup: l.muscleGroup });
   return Array.from(map.values());
 }
 
-function volumeSeriesForGroup(group) {
+/** La mejor serie: más peso; a igual peso, más reps (así un ejercicio con peso corporal compara reps). */
+function bestSet(logs) {
+  return logs.reduce((best, l) => (!best || l.weight > best.weight || (l.weight === best.weight && l.reps > best.reps)) ? l : best, null);
+}
+function setLabel(l) { return l.weight > 0 ? `${fmtNum(l.weight)} kg × ${l.reps}` : `${l.reps} reps`; }
+
+/** Sesiones de un ejercicio (una por fecha, más reciente primero), con su mejor serie. */
+function exerciseSessions(key) {
   const byDate = new Map();
-  for (const l of state.logs) {
-    if (l.muscleGroup !== group) continue;
-    byDate.set(l.date, (byDate.get(l.date) || 0) + l.weight * l.reps);
+  for (const l of logsForKey(key)) {
+    if (!byDate.has(l.date)) byDate.set(l.date, []);
+    byDate.get(l.date).push(l);
   }
-  return Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([x, y]) => ({ x, y: Math.round(y) }));
+  return Array.from(byDate.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, sets]) => {
+      sets.sort((a, b) => a.setNumber - b.setNumber || a.ts - b.ts);
+      return { date, sets, top: bestSet(sets), deload: sets.some(l => l.phase === 'descarga') };
+    });
 }
 
-function volumeByExerciseInGroup(group) {
-  const byKey = new Map();
-  for (const l of state.logs) {
-    if (l.muscleGroup !== group) continue;
-    const cur = byKey.get(l.exerciseKey) || { label: l.exerciseName, value: 0 };
-    cur.value += l.weight * l.reps;
-    byKey.set(l.exerciseKey, cur);
-  }
-  return Array.from(byKey.values()).map(v => ({ ...v, value: Math.round(v.value) })).sort((a, b) => b.value - a.value).slice(0, 8);
+/**
+ * Resumen por ejercicio: récord, última sesión y cambio de peso entre la
+ * primera y la última sesión de carga (las de descarga son livianas a
+ * propósito: compararlas daría una "pérdida" que no es tal).
+ */
+function exerciseSummary(key) {
+  const sessions = exerciseSessions(key);
+  const record = bestSet(sessions.map(s => s.top));
+  const last = sessions[0];
+  const loadSessions = sessions.filter(s => !s.deload);
+  const lastLoad = loadSessions[0];
+  const first = loadSessions[loadSessions.length - 1];
+  const change = loadSessions.length > 1 ? lastLoad.top.weight - first.top.weight : 0;
+  return { sessions, record, last, first, change };
+}
+
+function changeLabel(summary) {
+  if (!summary.change) return '';
+  const sign = summary.change > 0 ? '+' : '−';
+  return `${sign}${fmtNum(Math.abs(summary.change))} kg desde el ${formatDate(summary.first.date).slice(0, 5)}`;
 }
 
 function weightSeriesForExercise(key) {
-  const byDate = new Map();
-  for (const l of state.logs) {
-    if (l.exerciseKey !== key) continue;
-    byDate.set(l.date, Math.max(byDate.get(l.date) || 0, l.weight));
-  }
-  return Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([x, y]) => ({ x, y }));
+  return exerciseSessions(key).slice().reverse().map(s => ({ x: s.date, y: s.top.weight, hollow: s.deload, label: `${formatDate(s.date).slice(0, 5)} · ${setLabel(s.top)}${s.deload ? ' · descarga' : ''}` }));
 }
 
 function renderProgreso(main) {
@@ -633,38 +654,60 @@ function renderProgreso(main) {
     const groups = distinctGroupsLogged();
     if (!progressGroup || !groups.includes(progressGroup)) progressGroup = groups[0];
     html += `<div class="chip-row">${groups.map(g => `<button class="mg-chip chip-select ${muscleGroupClass(g)} ${g === progressGroup ? 'active' : ''}" onclick="App.setProgressGroup('${g}')">${escapeHtml(g)}</button>`).join('')}</div>`;
-    html += `<h2 class="section-title">Volumen total (kg × reps) por sesión</h2><div class="chart-box" id="chartVolume"></div>`;
-    html += `<h2 class="section-title">Volumen por ejercicio</h2><div class="chart-box" id="chartByEx"></div>`;
+
+    const rows = distinctExercisesLogged()
+      .filter(e => e.muscleGroup === progressGroup)
+      .map(e => ({ ...e, summary: exerciseSummary(e.key) }))
+      .sort((a, b) => b.summary.record.weight - a.summary.record.weight || b.summary.record.reps - a.summary.record.reps);
+    const scaleMax = Math.max(...rows.map(r => r.summary.record.weight), 0);
+
+    html += `<h2 class="section-title">Máximo por ejercicio</h2><div class="card flush rec-list">`;
+    for (const r of rows) {
+      const { record, last } = r.summary;
+      const pct = scaleMax && record.weight > 0 ? Math.max(4, (record.weight / scaleMax) * 100) : 0;
+      const change = changeLabel(r.summary);
+      html += `<button class="rec-row" onclick="App.openExercise('${r.key}')">
+        <div class="rec-top"><span class="rec-name">${escapeHtml(r.name)}</span><span class="rec-value">${setLabel(record)}</span></div>
+        ${pct ? `<div class="rec-track"><div class="rec-bar" style="width:${pct}%;background:var(${seriesVarFor(r.muscleGroup)})"></div></div>` : ''}
+        <div class="rec-meta">Última: ${setLabel(last.top)} · ${formatDate(last.date).slice(0, 5)}${last.deload ? ' (descarga)' : ''}${change ? ` · <b class="${r.summary.change > 0 ? 'up' : 'down'}">${change}</b>` : ''}</div>
+      </button>`;
+    }
+    html += `</div><p class="hint" style="text-align:center">Tocá un ejercicio para ver su evolución.</p>`;
     main.innerHTML = html;
-    lineChart(document.getElementById('chartVolume'), volumeSeriesForGroup(progressGroup), { seriesColorVar: seriesVarFor(progressGroup), unit: '', ariaLabel: `Volumen de ${progressGroup} por sesión` });
-    barChart(document.getElementById('chartByEx'), volumeByExerciseInGroup(progressGroup).map(b => ({ ...b, colorVar: seriesVarFor(progressGroup) })), { ariaLabel: `Volumen por ejercicio en ${progressGroup}` });
     return;
   }
 
   const exercises = distinctExercisesLogged();
   if (!progressExKey || !exercises.some(e => e.key === progressExKey)) progressExKey = exercises[0]?.key;
   const current = exercises.find(e => e.key === progressExKey);
+  const summary = exerciseSummary(progressExKey);
+  const change = changeLabel(summary);
 
   html += `<select class="ex-picker" onchange="App.setProgressExercise(this.value)">
     ${exercises.map(e => `<option value="${e.key}" ${e.key === progressExKey ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
-  </select>`;
-
-  const max = maxWeightFor(progressExKey);
-  const entries = logsForKey(progressExKey).sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
-  const sessions = new Set(entries.map(e => e.date)).size;
-
-  html += `<div class="stat-row">
-    <div class="stat-tile"><div class="label">Récord</div><div class="value">${max} kg</div></div>
-    <div class="stat-tile"><div class="label">Sesiones</div><div class="value">${sessions}</div></div>
+  </select>
+  <div class="stat-row">
+    <div class="stat-tile"><div class="label">Récord</div><div class="value">${summary.record.weight > 0 ? `${fmtNum(summary.record.weight)}<small> kg</small>` : summary.record.reps}</div><div class="sub">${summary.record.weight > 0 ? `× ${summary.record.reps} reps` : 'reps'} · ${formatDate(summary.record.date).slice(0, 5)}</div></div>
+    <div class="stat-tile"><div class="label">Última sesión</div><div class="value">${summary.last.top.weight > 0 ? `${fmtNum(summary.last.top.weight)}<small> kg</small>` : summary.last.top.reps}</div><div class="sub">${summary.last.top.weight > 0 ? `× ${summary.last.top.reps} reps` : 'reps'} · ${formatDate(summary.last.date).slice(0, 5)}</div></div>
   </div>
+  ${change ? `<p class="progress-note ${summary.change > 0 ? 'up' : 'down'}">${icon('trend')} ${change}</p>` : ''}
+  <h2 class="section-title">Mejor serie por sesión</h2>
   <div class="chart-box" id="chartWeight"></div>
+  ${summary.sessions.some(x => x.deload) ? '<p class="hint" style="margin-top:-4px">○ Punto vacío: semana de descarga (liviana a propósito, no cuenta como retroceso).</p>' : ''}
   <h2 class="section-title">Historial</h2>
-  <div class="card">${entries.map(e => `<div class="hist-item"><span class="d">${e.date}</span><span class="hist-w">${e.weight} kg × ${e.reps}${e.weight === max ? ' 🏆' : ''}</span></div>`).join('') || '<p class="hint">Sin registros todavía.</p>'}</div>`;
+  <div class="card flush">${summary.sessions.map(sess => `<div class="hist-session">
+      <div class="hs-head">
+        <span class="d">${formatDate(sess.date)}${sess.deload ? ' <span class="tag">Descarga</span>' : ''}</span>
+        <span class="hist-w">${sess.top === summary.record ? icon('trophy') : ''}${setLabel(sess.top)}</span>
+      </div>
+      <div class="hs-sets">${sess.sets.map(l => setLabel(l)).join(' · ')}</div>
+    </div>`).join('')}</div>`;
 
   main.innerHTML = html;
-  lineChart(document.getElementById('chartWeight'), weightSeriesForExercise(progressExKey), { seriesColorVar: seriesVarFor(current?.muscleGroup), unit: ' kg', ariaLabel: `Peso máximo de ${current?.name} por sesión` });
+  lineChart(document.getElementById('chartWeight'), weightSeriesForExercise(progressExKey), { seriesColorVar: seriesVarFor(current?.muscleGroup), unit: ' kg', ariaLabel: `Peso de la mejor serie de ${current?.name} por sesión` });
 }
 
+function openExercise(key) { progressMode = 'ejercicio'; progressExKey = key; render(); document.getElementById('main').scrollTop = 0; }
 function setProgressMode(m) { progressMode = m; render(); }
 function setProgressGroup(g) { progressGroup = g; render(); }
 function setProgressExercise(k) { progressExKey = k; render(); }
@@ -777,7 +820,7 @@ window.App = {
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
   wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, saveWizard,
-  setProgressMode, setProgressGroup, setProgressExercise,
+  setProgressMode, setProgressGroup, setProgressExercise, openExercise,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
   runInstallDiagnostics, setCurrentWeek,
 };
