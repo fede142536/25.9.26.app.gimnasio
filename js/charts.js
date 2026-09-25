@@ -35,11 +35,16 @@ export function lineChart(container, points, opts = {}) {
 
   // grilla horizontal (3 líneas), hairline recesiva
   const gridSteps = 3;
+  let lastTickLabel = null;
   for (let i = 0; i <= gridSteps; i++) {
     const v = minY + ((maxY - minY) * i) / gridSteps;
     const y = yFor(v);
     svg.appendChild(svgEl('line', { x1: pad.left, x2: width - pad.right, y1: y, y2: y, class: 'viz-grid' }));
-    svg.appendChild(svgEl('text', { x: pad.left - 6, y: y + 3, class: 'viz-tick', 'text-anchor': 'end' }, roundTick(v)));
+    const label = roundTick(v);
+    if (label !== lastTickLabel) {
+      svg.appendChild(svgEl('text', { x: pad.left - 6, y: y + 3, class: 'viz-tick', 'text-anchor': 'end' }, label));
+      lastTickLabel = label;
+    }
   }
 
   // línea 2px

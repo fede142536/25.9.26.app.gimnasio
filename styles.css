@@ -216,8 +216,20 @@ button { font-family: var(--font-body); cursor: pointer; }
 .day-block-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
 .day-block-head input { font-family: var(--font-display); font-weight: 600; font-size: 15px; background: transparent; border: none; color: var(--text); width: 100%; padding: 2px 0; }
 
-.ex-row { display: grid; grid-template-columns: 1fr 96px 44px 44px 56px 26px; gap: 5px; align-items: center; margin-bottom: 6px; }
-.ex-row input, .ex-row select { font-size: 12px; padding: 6px 5px; width: 100%; min-width: 0; }
+.ex-row {
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-areas: "name name" "group group" "sets reps" "rest remove";
+  gap: 5px; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.ex-row input, .ex-row select { font-size: 13px; padding: 7px 6px; width: 100%; min-width: 0; }
+.ex-row input[placeholder="Ejercicio"] { grid-area: name; }
+.ex-row select { grid-area: group; }
+.ex-row input[title="series"] { grid-area: sets; }
+.ex-row input[title="reps"] { grid-area: reps; }
+.ex-row input[title="descanso (s)"] { grid-area: rest; }
+.ex-row button.icon-btn { grid-area: remove; justify-self: end; }
+@media (min-width: 480px) {
+  .ex-row { grid-template-columns: 1fr 1fr 56px 56px 64px 28px; grid-template-areas: "name group sets reps rest remove"; }
+}
 .add-ex-btn, .add-day-btn { width: 100%; padding: 10px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--text-muted); font-weight: 600; font-size: 13.5px; margin-top: 4px; }
 
 /* importar rutina */
