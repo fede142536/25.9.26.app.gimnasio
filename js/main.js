@@ -4,7 +4,7 @@ import {
   repsForSetIndex, repsSchemeLabel, parseRepsSchemeInput,
   renameCategory, deleteCategory, categoryUsage, categoryNameTaken,
   MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
-  needsBackupReminder,
+  needsBackupReminder, renameExercise, knownExerciseNames,
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
@@ -29,7 +29,7 @@ let bodyMetric = 'weight';
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.7';
+const APP_VERSION = '2026-09-25.8';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -620,7 +620,8 @@ function renderWizard(main) {
   html += `<label class="field-label">Nombre de la rutina</label>
     <input name="routine-name" value="${escapeHtml(w.name)}" oninput="App.wizardSetName(this.value)">
     <label class="field-label">Fecha de inicio</label>
-    <input name="routine-date" type="date" value="${w.startDate}" oninput="App.wizardSetDate(this.value)">`;
+    <input name="routine-date" type="date" value="${w.startDate}" oninput="App.wizardSetDate(this.value)">
+    <datalist id="knownExercises">${knownExerciseNames(state).map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
 
   for (const day of w.days) {
     html += `<div class="day-block">
@@ -632,7 +633,7 @@ function renderWizard(main) {
       const prev = day.exercises[exIdx - 1];
       const linked = exIdx > 0 && ex.supersetGroup && prev.supersetGroup === ex.supersetGroup;
       html += `<div class="ex-row">
-        <input placeholder="Ejercicio" value="${escapeHtml(ex.name)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','name',this.value)">
+        <input placeholder="Ejercicio" list="knownExercises" value="${escapeHtml(ex.name)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','name',this.value)">
         <select onchange="App.wizardUpdateEx('${day.id}','${ex.id}','muscleGroup',this.value)">
           ${getCategories().map(c => `<option value="${escapeHtml(c.name)}" ${c.name === ex.muscleGroup ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
@@ -1047,9 +1048,13 @@ function renderProgreso(main) {
   const summary = exerciseSummary(progressExKey);
   const change = changeLabel(summary);
 
-  html += `<select class="ex-picker" onchange="App.setProgressExercise(this.value)">
-    ${exercises.map(e => `<option value="${e.key}" ${e.key === progressExKey ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
-  </select>
+  html += `<div class="ex-picker-row">
+    <select class="ex-picker" onchange="App.setProgressExercise(this.value)">
+      ${exercises.map(e => `<option value="${e.key}" ${e.key === progressExKey ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
+    </select>
+    <button class="icon-btn-round" title="Corregir el nombre de este ejercicio" aria-label="Corregir el nombre de este ejercicio" onclick="App.renameExerciseFlow()">${icon('edit')}</button>
+  </div>
+  <p class="hint" style="margin-top:-6px">¿Este ejercicio quedó dividido en dos por escribirlo distinto en otra rutina? Corregí el nombre y se une el historial.</p>
   <div class="stat-row">
     <div class="stat-tile"><div class="label">Récord</div><div class="value">${summary.record.weight > 0 ? `${fmtNum(summary.record.weight)}<small> kg</small>` : summary.record.reps}</div><div class="sub">${summary.record.weight > 0 ? `× ${summary.record.reps} reps` : 'reps'} · ${formatDate(summary.record.date).slice(0, 5)}</div></div>
     <div class="stat-tile"><div class="label">Última sesión</div><div class="value">${summary.last.top.weight > 0 ? `${fmtNum(summary.last.top.weight)}<small> kg</small>` : summary.last.top.reps}</div><div class="sub">${summary.last.top.weight > 0 ? `× ${summary.last.top.reps} reps` : 'reps'} · ${formatDate(summary.last.date).slice(0, 5)}</div></div>
@@ -1075,6 +1080,27 @@ function openExercise(key) { progressMode = 'ejercicio'; progressExKey = key; re
 function setProgressMode(m) { progressMode = m; render(); }
 function setProgressGroup(g) { progressGroup = g; render(); }
 function setProgressExercise(k) { progressExKey = k; render(); }
+
+/**
+ * Corrige el nombre del ejercicio seleccionado en todo su historial. Existe
+ * para arreglar el caso en que se escribió distinto en otra rutina y el
+ * progreso quedó dividido en dos sin que nada lo avisara.
+ */
+function renameExerciseFlow() {
+  const current = distinctExercisesLogged().find(e => e.key === progressExKey);
+  if (!current) return;
+  const value = prompt('Corregir el nombre de este ejercicio (se aplica a toda su rutina e historial):', current.name);
+  if (value == null) return;
+  const newName = value.trim();
+  if (!newName || newName === current.name) return;
+  const newKey = normalizeName(newName);
+  if (newKey !== current.key && state.logs.some(l => l.exerciseKey === newKey)) {
+    if (!confirm(`Ya existe un ejercicio llamado "${newName}" con su propio historial. Se van a unir en uno solo — no se puede deshacer. ¿Continuar?`)) return;
+  }
+  renameExercise(state, current.key, newName);
+  progressExKey = newKey;
+  persist(); render();
+}
 
 /* ================================================================ Modal: configuración y respaldo ================================================================ */
 
@@ -1284,7 +1310,7 @@ window.App = {
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
   wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, wizardToggleSuperset, saveWizard,
-  setProgressMode, setProgressGroup, setProgressExercise, openExercise,
+  setProgressMode, setProgressGroup, setProgressExercise, openExercise, renameExerciseFlow,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
   runInstallDiagnostics, setCurrentWeek,
   openCategories, renameCat, addCat, askDeleteCat, cancelDeleteCat, confirmDeleteCat,

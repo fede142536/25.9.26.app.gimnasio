@@ -177,6 +177,35 @@ export function renameCategory(st, oldName, newName) {
   setCategories(st.categories);
 }
 
+/**
+ * Corrige el nombre de un ejercicio en todo su historial (rutinas + series
+ * ya registradas). Existe porque el progreso entre rutinas se enlaza por el
+ * nombre normalizado: si se escribe distinto la próxima vez ("Press banca"
+ * vs. "Press de banca"), el historial se corta en dos sin ningún aviso.
+ * Si el nombre nuevo coincide con el de OTRO ejercicio ya existente, ambos
+ * historiales quedan unidos en uno solo (fusión, sin vuelta atrás).
+ */
+export function renameExercise(st, oldKey, newName) {
+  const newKey = normalizeName(newName);
+  for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) {
+    if (normalizeName(ex.name) === oldKey) ex.name = newName;
+  }
+  for (const l of st.logs) {
+    if (l.exerciseKey === oldKey) { l.exerciseName = newName; l.exerciseKey = newKey; }
+  }
+}
+
+/** Nombres de ejercicio ya usados (rutinas + historial), sin duplicados por acentos/mayúsculas — para autocompletar. */
+export function knownExerciseNames(st) {
+  const byKey = new Map();
+  for (const l of st.logs) if (!byKey.has(l.exerciseKey)) byKey.set(l.exerciseKey, l.exerciseName);
+  for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) {
+    const key = normalizeName(ex.name);
+    if (key && !byKey.has(key)) byKey.set(key, ex.name);
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b, 'es'));
+}
+
 export function deleteCategory(st, name, moveTo) {
   st.categories = st.categories.filter(c => c.name !== name);
   for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) if (ex.muscleGroup === name) ex.muscleGroup = moveTo;

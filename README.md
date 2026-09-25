@@ -38,6 +38,12 @@ dispositivo (no hay servidor ni cuenta).
   fecha: IMC, evolución de cada medida con gráfico, historial editable y
   exportación a .csv para analizar en Excel o Google Sheets.
 
+El progreso se enlaza entre rutinas por el nombre del ejercicio: si se
+escribe distinto la próxima vez, el historial se corta sin avisar. Para
+evitarlo, el nombre se autocompleta con los ya usados al cargar una
+rutina; y si ya pasó, en "Progreso → por ejercicio" hay un botón para
+corregir el nombre y unir el historial dividido en uno solo.
+
 Las superseries ("combinado con" en el Word) se entrenan intercaladas de
 verdad: sin descanso entre los dos ejercicios, descanso recién al cerrar
 la ronda completa. Se detectan solas al importar, y se pueden armar o

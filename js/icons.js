@@ -22,6 +22,7 @@ const PATHS = {
   flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
   trash: '<path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/>',
   link: '<path d="M9 15l6-6"/><path d="M8 13.5l-2 2a3.2 3.2 0 0 0 4.5 4.5l3-3a3.2 3.2 0 0 0 0-4.5"/><path d="M16 10.5l2-2a3.2 3.2 0 0 0-4.5-4.5l-3 3a3.2 3.2 0 0 0 0 4.5"/>',
+  edit: '<path d="M4 20l1-4.2L16.5 4.3a1.6 1.6 0 0 1 2.3 0l1 1a1.6 1.6 0 0 1 0 2.3L8.2 19 4 20z"/><path d="M14.5 6.3l3.2 3.2"/>',
 };
 
 export function icon(name, extraClass = '') {
