@@ -316,3 +316,10 @@ select.ex-picker { width: 100%; padding: 10px 12px; border-radius: var(--radius)
 .modal-box .field label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
 .modal-box .field input { width: 100%; padding: 8px 10px; }
 .modal-close-row { display: flex; justify-content: flex-end; margin-top: 14px; gap: 8px; }
+
+/* ============================================================ Diagnóstico de instalación ============================================================ */
+.diag-output {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; margin-top: 8px; color: var(--text);
+}
+.diag-output[hidden] { display: none; }

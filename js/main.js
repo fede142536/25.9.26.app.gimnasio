@@ -19,7 +19,10 @@ let progressExKey = null;
 let routineWizard = null; // asistente de creación/edición de rutina
 let modalView = null;     // 'settings' | null
 
-const WEEKDAY_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+/** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
+const APP_VERSION = '2026-09-25.1';
+
+const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
 function persist() { saveState(state); }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -533,6 +536,10 @@ function renderModal() {
           Restaurar<input type="file" accept="application/json" style="display:none" onchange="App.doImport(this)">
         </label>
       </div>
+      <h2 style="font-size:15px;margin-top:18px">Diagnóstico de instalación</h2>
+      <p class="hint">Versión ${APP_VERSION}. Si la app no se deja instalar, tocá el botón y mandá una captura de lo que aparece.</p>
+      <button class="btn-secondary" onclick="App.runInstallDiagnostics()">Ver diagnóstico</button>
+      <pre id="diagOutput" class="diag-output" hidden></pre>
       <div class="modal-close-row"><button class="btn-primary" style="width:auto;padding:9px 20px" onclick="App.closeModal()">Cerrar</button></div>
     </div>
   </div>`;
@@ -555,6 +562,52 @@ function doImport(input) {
   reader.readAsText(file);
 }
 
+/* ================================================================ Diagnóstico de instalación (PWA) ================================================================ */
+
+/**
+ * Revisa desde el propio dispositivo los requisitos para instalar la app
+ * (manifest, íconos, service worker, HTTPS). Existe porque el navegador
+ * del celular no explica por qué rechaza la instalación.
+ */
+async function runInstallDiagnostics() {
+  const out = document.getElementById('diagOutput');
+  out.hidden = false;
+  out.textContent = 'Revisando…';
+  const lines = [`Versión: ${APP_VERSION}`, `URL: ${location.href}`, `Contexto seguro (HTTPS): ${window.isSecureContext ? 'sí' : 'NO'}`];
+
+  const manifestLink = document.querySelector('link[rel="manifest"]');
+  if (!manifestLink) {
+    lines.push('Manifest: NO está enlazado en la página');
+  } else {
+    try {
+      const res = await fetch(manifestLink.href, { cache: 'no-store' });
+      lines.push(`Manifest: ${res.status} (${res.headers.get('content-type') || 'sin tipo'})`);
+      const manifest = await res.json();
+      lines.push(`  nombre: ${manifest.name} · display: ${manifest.display} · start_url: ${manifest.start_url}`);
+      for (const icon of manifest.icons || []) {
+        const iconUrl = new URL(icon.src, manifestLink.href).href;
+        const iconRes = await fetch(iconUrl, { cache: 'no-store' }).catch(() => null);
+        lines.push(`  ícono ${icon.sizes} (${icon.purpose}): ${iconRes ? iconRes.status : 'error de red'}`);
+      }
+    } catch (e) {
+      lines.push(`Manifest: ERROR al leerlo — ${e.message}`);
+    }
+  }
+
+  if (!('serviceWorker' in navigator)) {
+    lines.push('Service worker: el navegador no lo soporta');
+  } else {
+    const reg = await navigator.serviceWorker.getRegistration();
+    lines.push(`Service worker: ${reg ? `registrado (activo: ${reg.active ? 'sí' : 'no'}, scope: ${reg.scope})` : 'NO registrado'}`);
+    if (swRegistrationError) lines.push(`  error al registrar: ${swRegistrationError}`);
+  }
+
+  lines.push(`Ya instalada (modo app): ${window.matchMedia('(display-mode: standalone)').matches ? 'sí' : 'no'}`);
+  lines.push(`El navegador ofreció instalar: ${installPromptFired ? 'sí' : 'no'}`);
+  lines.push(`Navegador: ${navigator.userAgent}`);
+  out.textContent = lines.join('\n');
+}
+
 /* ================================================================ Init ================================================================ */
 
 window.App = {
@@ -564,20 +617,26 @@ window.App = {
   wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, saveWizard,
   setProgressMode, setProgressGroup, setProgressExercise,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
+  runInstallDiagnostics,
 };
 
 document.querySelectorAll('nav.tabbar button').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.view)));
 document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
 
 // PWA: se instala en el dispositivo y funciona sin conexión (el "backend" es el propio localStorage).
+let swRegistrationError = null;
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => { /* sin sw la app sigue funcionando, solo no queda offline */ }));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((err) => {
+    swRegistrationError = err.message; // sin sw la app sigue funcionando, solo no queda offline
+  }));
 }
 let deferredInstallPrompt = null;
+let installPromptFired = false;
 const installBtn = document.getElementById('installBtn');
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
+  installPromptFired = true;
   installBtn.hidden = false;
 });
 installBtn.addEventListener('click', async () => {

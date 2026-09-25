@@ -2,6 +2,7 @@
   "name": "Gimnasio — Entrenador de musculación",
   "short_name": "Gimnasio",
   "description": "Registrá tus rutinas, tus series y tu progreso. Funciona sin conexión, sin backend.",
+  "id": "./",
   "lang": "es",
   "start_url": "./index.html",
   "scope": "./",
