@@ -13,7 +13,7 @@
  * No se intercepta nada de otro origen.
  */
 
-const CACHE_NAME = 'gimnasio-shell-v3';
+const CACHE_NAME = 'gimnasio-shell-v4';
 const NETWORK_TIMEOUT_MS = 3000;
 
 const CORE_ASSETS = [

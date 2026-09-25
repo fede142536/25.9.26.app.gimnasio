@@ -290,6 +290,16 @@ button.mg-chip { border: 1px solid var(--border); background: var(--surface); pa
 .ex-sub .meta { display: inline-flex; align-items: center; gap: 4px; }
 .ex-sub .meta .icon { width: 14px; height: 14px; }
 .ex-card.done .ex-name { color: var(--text-muted); }
+.ss-tag {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--accent-strong); background: var(--accent-soft); border-radius: 999px; padding: 4px 10px; margin: 8px 0 0;
+}
+.ss-tag .icon { width: 14px; height: 14px; }
+.ex-notes {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--text-muted);
+  margin: 8px 0 0; line-height: 1.4;
+}
+.ex-notes .icon { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
 
 .set-track { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 6px; margin-top: 14px; }
 .set-pill {
@@ -412,6 +422,15 @@ button.set-pill.done:active { filter: brightness(0.94); }
 @media (min-width: 480px) {
   .ex-row { grid-template-columns: 1fr 1fr 56px 80px 64px 32px; grid-template-areas: "name group sets reps rest remove"; }
 }
+.ex-extra { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; flex-wrap: wrap; }
+.ss-toggle {
+  display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-muted); border-radius: 999px; padding: 6px 11px; font-size: 12px; font-weight: 600; flex-shrink: 0;
+}
+.ss-toggle .icon { width: 13px; height: 13px; }
+.ss-toggle.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.ex-notes-input { flex: 1; min-width: 120px; padding: 8px 10px; font-size: 12.5px; background: var(--surface-2); }
+
 .add-ex-btn, .add-day-btn {
   width: 100%; padding: 12px; border: 1.5px dashed var(--border); border-radius: 12px; background: transparent;
   color: var(--text-muted); font-weight: 600; font-size: 14px; margin-top: 4px;

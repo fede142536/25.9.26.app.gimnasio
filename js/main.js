@@ -29,7 +29,7 @@ let bodyMetric = 'weight';
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.6';
+const APP_VERSION = '2026-09-25.7';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -137,6 +137,35 @@ function dayTitle(day) {
   return parts.length > 1 ? parts.slice(1).join(' · ') : day.name;
 }
 
+/**
+ * Agrupa los ejercicios de un día en "unidades": una superserie (2+
+ * ejercicios contiguos con el mismo supersetGroup) es una unidad; el
+ * resto son unidades de un solo ejercicio. Se agrupa por tramos
+ * contiguos, no por id de grupo en todo el día, para que desvincular un
+ * ejercicio del medio no vuelva a unir accidentalmente a los de los
+ * costados.
+ */
+function buildUnits(exercises) {
+  const units = [];
+  let i = 0;
+  while (i < exercises.length) {
+    const ex = exercises[i];
+    let j = i + 1;
+    if (ex.supersetGroup) while (j < exercises.length && exercises[j].supersetGroup === ex.supersetGroup) j++;
+    units.push(exercises.slice(i, j));
+    i = j;
+  }
+  return units;
+}
+
+/** El ejercicio de una superserie que sigue: el de menos series hechas (a igualdad, el primero en el orden). */
+function nextActiveInGroup(group) {
+  const active = group.filter(e => (todaySets[e.id]?.setsLogged ?? 0) < e.sets);
+  if (!active.length) return null;
+  const minLogged = Math.min(...active.map(e => todaySets[e.id].setsLogged));
+  return active.find(e => todaySets[e.id].setsLogged === minLogged) || active[0];
+}
+
 /** Series ya registradas hoy para un ejercicio: así el progreso del día sobrevive a cerrar la app. */
 function todayLogsFor(dayId, exId) {
   const today = todayISO();
@@ -174,8 +203,21 @@ function renderHoy(main) {
   const totalSets = day.exercises.reduce((a, ex) => a + ex.sets, 0);
   const doneSets = rows.reduce((a, r) => a + Math.min(r.prog.setsLogged, r.ex.sets), 0);
   const pct = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
-  const focused = rows.find(r => r.ex.id === focusedExId && !r.done);
-  const current = focused || rows.find(r => !r.done) || null;
+  const rowsById = new Map(rows.map(r => [r.ex.id, r]));
+
+  // unidades del día: una superserie completa (2+ ejercicios) cuenta como una sola unidad al elegir "el actual"
+  const units = buildUnits(day.exercises).map(exs => exs.map(ex => rowsById.get(ex.id)));
+  const unitDone = (u) => u.every(r => r.done);
+  const activeRowOfUnit = (u) => {
+    if (u.length === 1) return u[0].done ? null : u[0];
+    const active = u.filter(r => !r.done);
+    if (!active.length) return null;
+    const minLogged = Math.min(...active.map(r => r.prog.setsLogged));
+    return active.find(r => r.prog.setsLogged === minLogged) || active[0];
+  };
+  const focusedUnit = focusedExId ? units.find(u => u.some(r => r.ex.id === focusedExId) && !unitDone(u)) : null;
+  const currentUnit = focusedUnit || units.find(u => !unitDone(u)) || null;
+  const current = currentUnit ? activeRowOfUnit(currentUnit) : null;
 
   let html = `<section class="session-hero">
     <div class="day-tabs" role="tablist">
@@ -200,14 +242,22 @@ function renderHoy(main) {
     html += `<div class="day-done"><h3>¡Día completo!</h3>Registraste las ${totalSets} series. Buen entrenamiento.</div>`;
   }
 
-  rows.forEach((r, i) => { html += exerciseCardHtml(r, i, r === current, day.id); });
+  const partnersById = new Map();
+  for (const u of units) {
+    if (u.length < 2) continue;
+    for (const r of u) partnersById.set(r.ex.id, u.filter(o => o !== r).map(o => o.ex.name).join(' + '));
+  }
+
+  rows.forEach((r, i) => { html += exerciseCardHtml(r, i, r === current, day.id, partnersById.get(r.ex.id) || null); });
   main.innerHTML = html;
 }
 
-function exerciseCardHtml(r, index, isCurrent, dayId) {
+function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
   const { ex, key, suggestion, logged, prog, done } = r;
   const last = lastWeightFor(key);
   const state_ = done ? 'done' : isCurrent ? 'current' : '';
+  const ssTag = partnersLabel ? `<div class="ss-tag">${icon('link')} Superserie con ${escapeHtml(partnersLabel)}</div>` : '';
+  const notesLine = ex.notes ? `<div class="ex-notes">${icon('paste')}${escapeHtml(ex.notes)}</div>` : '';
 
   const pills = Array.from({ length: ex.sets }, (_, s) => {
     const l = logged[s];
@@ -231,7 +281,7 @@ function exerciseCardHtml(r, index, isCurrent, dayId) {
 
   if (!isCurrent) {
     const tap = done ? '' : ` onclick="App.focusExercise('${ex.id}')" style="cursor:pointer"`;
-    return `<article class="ex-card ${state_}"${tap}>${head}<div class="set-track">${pills}</div>${prBadge}</article>`;
+    return `<article class="ex-card ${state_}"${tap}>${head}${ssTag}${notesLine}<div class="set-track">${pills}</div>${prBadge}</article>`;
   }
 
   const sw = suggestion.suggestedWeight;
@@ -244,6 +294,8 @@ function exerciseCardHtml(r, index, isCurrent, dayId) {
 
   return `<article class="ex-card current" id="ex-${ex.id}">
     ${head}
+    ${ssTag}
+    ${notesLine}
     <div class="set-track">${pills}</div>
     ${coach}
     <div class="input-grid">
@@ -364,6 +416,13 @@ function useSuggestion(exId, weight) { todaySets[exId].weight = weight; render()
 function setWeight(exId, value) { todaySets[exId].weight = Math.max(0, parseFloat(String(value).replace(',', '.')) || 0); }
 function setReps(exId, value) { todaySets[exId].reps = Math.max(0, parseInt(value, 10) || 0); }
 
+/**
+ * Registrar una serie. Si el ejercicio es parte de una superserie (2+
+ * ejercicios "combinados"), no hay descanso hasta terminar la ronda
+ * completa (una serie de cada uno); recién ahí se descansa, como se
+ * entrena en la práctica. Fuera de una superserie, el descanso es el de
+ * siempre, entre cada serie del mismo ejercicio.
+ */
 function logSet(exId, dayId) {
   const routine = getActiveRoutine(state);
   const day = routine.days.find(d => d.id === dayId);
@@ -373,6 +432,12 @@ function logSet(exId, dayId) {
   const wasMax = maxWeightFor(key);
   const info = weekInfo(routine, todayISO(), state.settings);
 
+  const group = ex.supersetGroup ? day.exercises.filter(e => e.supersetGroup === ex.supersetGroup) : [];
+  const isGroup = group.length > 1;
+  // ¿exId es el último que le faltaba hacer su serie en esta ronda? (antes de registrar esta)
+  const activeBefore = isGroup ? group.filter(e => (todaySets[e.id]?.setsLogged ?? 0) < e.sets) : [];
+  const closesRound = !isGroup || (activeBefore.length && activeBefore[activeBefore.length - 1].id === exId);
+
   state.logs.push({
     id: uid(), ts: Date.now(), date: todayISO(), routineId: routine.id, dayId,
     exerciseId: exId, exerciseName: ex.name, exerciseKey: key, muscleGroup: ex.muscleGroup,
@@ -381,18 +446,29 @@ function logSet(exId, dayId) {
   });
   prog.setsLogged++;
   if (prog.weight > 0 && prog.weight > wasMax) prog.pr = prog.weight;
+  if (prog.setsLogged < ex.sets) prog.reps = repsForSetIndex(ex, prog.setsLogged); // la próxima serie muestra su propia meta de reps (esquema piramidal)
   persist();
 
-  const finished = prog.setsLogged >= ex.sets;
-  if (!finished) {
-    prog.reps = repsForSetIndex(ex, prog.setsLogged); // la próxima serie muestra su propia meta de reps (esquema piramidal)
-    startRest(ex.restSeconds, ex.name, renderRestBar);
+  let advancedUnit = false;
+  if (isGroup) {
+    if (closesRound) {
+      // se completó la ronda: ahora sí, a descansar. Si la superserie no terminó, seguimos enfocados en
+      // ella (para su próxima ronda) aunque haya una unidad anterior sin terminar (la saltamos a propósito).
+      advancedUnit = group.every(e => todaySets[e.id].setsLogged >= e.sets);
+      focusedExId = advancedUnit ? null : ex.id;
+      startRest(ex.restSeconds, ex.name, renderRestBar);
+    } else {
+      // sigue la ronda: se pasa directo al otro ejercicio de la superserie, sin descanso
+      focusedExId = nextActiveInGroup(group)?.id ?? null;
+      skipRest(renderRestBar);
+    }
   } else {
-    focusedExId = null;
-    skipRest(renderRestBar);
+    const finished = prog.setsLogged >= ex.sets;
+    if (finished) { focusedExId = null; skipRest(renderRestBar); advancedUnit = true; }
+    else startRest(ex.restSeconds, ex.name, renderRestBar);
   }
   render();
-  if (finished) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (advancedUnit) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 /* ================================================================ Vista: Rutinas ================================================================ */
@@ -552,7 +628,9 @@ function renderWizard(main) {
         <input value="${escapeHtml(day.name)}" onchange="App.wizardRenameDay('${day.id}', this.value)">
         <button class="icon-btn" onclick="App.wizardRemoveDay('${day.id}')">✕ día</button>
       </div>`;
-    for (const ex of day.exercises) {
+    day.exercises.forEach((ex, exIdx) => {
+      const prev = day.exercises[exIdx - 1];
+      const linked = exIdx > 0 && ex.supersetGroup && prev.supersetGroup === ex.supersetGroup;
       html += `<div class="ex-row">
         <input placeholder="Ejercicio" value="${escapeHtml(ex.name)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','name',this.value)">
         <select onchange="App.wizardUpdateEx('${day.id}','${ex.id}','muscleGroup',this.value)">
@@ -562,8 +640,12 @@ function renderWizard(main) {
         <input type="text" title="reps (ej: 10 o 10-8-8-6)" placeholder="reps" value="${repsSchemeLabel(ex)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','repsScheme',this.value)">
         <input type="number" title="descanso (s)" value="${ex.restSeconds}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','restSeconds',this.value)">
         <button class="icon-btn" onclick="App.wizardRemoveEx('${day.id}','${ex.id}')">✕</button>
+      </div>
+      <div class="ex-extra">
+        ${exIdx > 0 ? `<button class="ss-toggle ${linked ? 'active' : ''}" onclick="App.wizardToggleSuperset('${day.id}','${ex.id}')">${icon('link')} ${linked ? 'Superserie con la anterior' : 'Vincular con la anterior'}</button>` : ''}
+        <input class="ex-notes-input" placeholder="Notas (opcional): agarre, banda, altura del asiento…" value="${escapeHtml(ex.notes || '')}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','notes',this.value)">
       </div>`;
-    }
+    });
     html += `<button class="add-ex-btn" onclick="App.wizardAddExercise('${day.id}')">+ Agregar ejercicio</button></div>`;
   }
   html += `<button class="add-day-btn" onclick="App.wizardAddDay()">+ Agregar día</button>
@@ -582,7 +664,7 @@ function wizardRenameDay(id, name) { routineWizard.days.find(d => d.id === id).n
 function wizardAddExercise(dayId) {
   const day = routineWizard.days.find(d => d.id === dayId);
   // groupAuto: la categoría se sigue adivinando por el nombre hasta que el usuario elija una a mano
-  day.exercises.push({ id: uid(), name: '', muscleGroup: guessMuscleGroup(day.name) || getCategories()[0].name, groupAuto: true, sets: 4, repsScheme: [10], restSeconds: 90 });
+  day.exercises.push({ id: uid(), name: '', muscleGroup: guessMuscleGroup(day.name) || getCategories()[0].name, groupAuto: true, sets: 4, repsScheme: [10], restSeconds: 90, notes: '', supersetGroup: null });
   render();
 }
 function wizardRemoveEx(dayId, exId) {
@@ -598,7 +680,34 @@ function wizardUpdateEx(dayId, exId, field, value) {
     if (guess && guess !== ex.muscleGroup) { ex.muscleGroup = guess; render(); }
   } else if (field === 'muscleGroup') { ex.muscleGroup = value; ex.groupAuto = false; }
   else if (field === 'repsScheme') ex.repsScheme = parseRepsSchemeInput(value);
+  else if (field === 'notes') ex.notes = value;
   else ex[field] = parseFloat(value) || 0;
+}
+
+/**
+ * Vincula (o desvincula) un ejercicio con el anterior en el mismo día,
+ * para armar (o deshacer) una superserie a mano. Si el anterior ya
+ * estaba en un grupo, este se suma al mismo; encadenar de a uno permite
+ * armar trisets. Al desvincular, si al grupo le queda un solo ejercicio,
+ * se limpia entero (ya no es "superserie" de uno solo).
+ */
+function wizardToggleSuperset(dayId, exId) {
+  const day = routineWizard.days.find(d => d.id === dayId);
+  const idx = day.exercises.findIndex(e => e.id === exId);
+  if (idx <= 0) return;
+  const prev = day.exercises[idx - 1];
+  const cur = day.exercises[idx];
+  if (cur.supersetGroup && cur.supersetGroup === prev.supersetGroup) {
+    const groupId = cur.supersetGroup;
+    cur.supersetGroup = null;
+    const rest = day.exercises.filter(e => e.supersetGroup === groupId);
+    if (rest.length < 2) rest.forEach(e => { e.supersetGroup = null; });
+  } else {
+    const groupId = prev.supersetGroup || uid();
+    prev.supersetGroup = groupId;
+    cur.supersetGroup = groupId;
+  }
+  render();
 }
 
 function saveWizard() {
@@ -658,14 +767,20 @@ function renderEntrenador(main) {
 
   for (const { day, items } of perDay) {
     if (!items.length) continue;
+    const groups = buildUnits(day.exercises);
+    const partnersById = new Map();
+    for (const g of groups) if (g.length > 1) for (const e of g) partnersById.set(e.id, g.filter(o => o !== e).map(o => o.name).join(' + '));
     html += `<div class="card flush"><h3 class="card-title">${escapeHtml(day.name)}</h3><div class="coach-list">`;
     for (const { ex, s: sug } of items) {
       const plannedReps = ex.repsScheme[ex.repsScheme.length - 1];
+      const partners = partnersById.get(ex.id);
       html += `<div class="coach-row">
         <span class="fatigue-dot ${sug.fatigue.replace(' ', '')}" title="Fatiga ${sug.fatigue}"></span>
         <div class="cr-main">
           <div class="cr-name">${escapeHtml(ex.name)}</div>
           <div class="cr-meta"><span class="mg-chip ${muscleGroupClass(ex.muscleGroup)}">${escapeHtml(ex.muscleGroup)}</span>${ex.sets} × ${repsSchemeLabel(ex)}</div>
+          ${partners ? `<div class="ss-tag" style="margin-top:6px">${icon('link')} Superserie con ${escapeHtml(partners)}</div>` : ''}
+          ${ex.notes ? `<div class="ex-notes">${icon('paste')}${escapeHtml(ex.notes)}</div>` : ''}
           <div class="cr-note">${escapeHtml(sug.note)}</div>
         </div>
         ${sug.suggestedWeight != null ? `<div class="cr-target"><b>${sug.suggestedWeight > 0 ? fmtNum(sug.suggestedWeight) : 'PC'}</b><small>${sug.suggestedWeight > 0 ? 'kg' : 'peso corp.'} · ${sug.suggestedReps || plannedReps} reps</small></div>` : ''}
@@ -1168,7 +1283,7 @@ window.App = {
   skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
-  wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, saveWizard,
+  wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, wizardToggleSuperset, saveWizard,
   setProgressMode, setProgressGroup, setProgressExercise, openExercise,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
   runInstallDiagnostics, setCurrentWeek,

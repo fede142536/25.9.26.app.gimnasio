@@ -38,6 +38,13 @@ dispositivo (no hay servidor ni cuenta).
   fecha: IMC, evolución de cada medida con gráfico, historial editable y
   exportación a .csv para analizar en Excel o Google Sheets.
 
+Las superseries ("combinado con" en el Word) se entrenan intercaladas de
+verdad: sin descanso entre los dos ejercicios, descanso recién al cerrar
+la ronda completa. Se detectan solas al importar, y se pueden armar o
+deshacer a mano en el editor de rutina (botón "Vincular con la
+anterior"). Cada ejercicio también admite una nota libre (agarre, banda,
+altura del asiento…), visible en "Hoy" y en "Entrenador".
+
 Cualquier serie ya registrada (en "Hoy" o en el historial de "Progreso")
 se puede tocar para editar el peso/reps o borrarla, por si se cargó mal.
 

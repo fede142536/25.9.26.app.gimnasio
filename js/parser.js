@@ -23,7 +23,7 @@
  * antes de guardar.
  */
 
-import { uid } from './state.js';
+import { uid, uid as makeGroupId } from './state.js';
 import { guessMuscleGroup, getCategories } from './muscleGroups.js';
 
 const MAMMOTH_LOCAL_PATH = new URL('./vendor/mammoth.browser.min.js', import.meta.url).href;
@@ -100,15 +100,28 @@ function parseExerciseLine(line) {
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
     const nameStart = i === 0 ? 0 : tokens[i - 1].end;
-    const name = cleanExerciseName(line.slice(nameStart, tok.start));
+    const rawSegment = line.slice(nameStart, tok.start);
+    const name = cleanExerciseName(rawSegment);
     if (!name) continue; // ej: dos esquemas de series pegados sin nombre nuevo en el medio
+    // "combinado con" antes de este ejercicio = va pegado al anterior en una superserie
+    const linkedToPrevious = results.length > 0 && /\b(combinad[oa])\s+con\b/i.test(rawSegment);
     const afterEnd = i + 1 < tokens.length ? tokens[i + 1].start : line.length;
-    const restMatch = line.slice(tok.end, afterEnd).match(REST_RE);
+    const afterText = line.slice(tok.end, afterEnd);
+    const restMatch = afterText.match(REST_RE);
+    // Solo el último ejercicio de la línea puede tener una nota final: en los del medio, ese texto
+    // ya es el nombre del ejercicio siguiente. Ej: "Fondos en paralelas 3x10-8-6 con banda" → nota "con banda".
+    let notes = '';
+    if (i === tokens.length - 1) {
+      notes = afterText.replace(REST_RE, '').replace(/^[\s,.\-–:]+|[\s,.\-–:]+$/g, '');
+      if (notes.length > 60) notes = ''; // demasiado largo: probablemente no era una nota, no arriesgamos
+    }
     results.push({
       name: capitalize(name),
       sets: tok.sets,
       repsScheme: tok.repsScheme.length ? tok.repsScheme : [10],
       restSeconds: restMatch ? (toSeconds(restMatch[1], restMatch[2]) || 90) : 90,
+      notes,
+      linkedToPrevious,
     });
   }
   return results;
@@ -135,6 +148,9 @@ export function parseRoutineText(text) {
     if (parsed.length) {
       if (!current) { current = { id: uid(), name: 'Día 1', exercises: [] }; days.push(current); }
       for (const p of parsed) {
+        // "combinado con" liga este ejercicio con el que se acaba de agregar en este mismo día (superserie)
+        const prev = current.exercises[current.exercises.length - 1];
+        const supersetGroup = p.linkedToPrevious && prev ? (prev.supersetGroup ||= makeGroupId()) : null;
         current.exercises.push({
           id: uid(),
           name: p.name,
@@ -142,6 +158,8 @@ export function parseRoutineText(text) {
           sets: p.sets,
           repsScheme: p.repsScheme,
           restSeconds: p.restSeconds,
+          notes: p.notes || '',
+          supersetGroup,
         });
       }
     } else if (line.length > 2) {
