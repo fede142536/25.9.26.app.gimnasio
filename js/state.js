@@ -16,9 +16,14 @@
  *   logs: [{ id, ts, date, routineId, dayId, exerciseId, exerciseName, exerciseKey,
  *            muscleGroup, weight, reps, setNumber, weekNumber, weekInBlock, phase }],
  *   settings: { mesocycleWeeks, deloadFactor, incrementUpper, incrementLower, repIncrement },
- *   selectedDayId
+ *   selectedDayId,
+ *   categories: [{ name, slot }],            // grupos musculares editables (ver muscleGroups.js)
+ *   profile: { heightCm },
+ *   measurements: [{ id, date, weight, waist, chest, arm, leg }]  // kg y cm; campos vacíos = null
  * }
  */
+
+import { DEFAULT_CATEGORIES, setCategories, guessMuscleGroup, norm } from './muscleGroups.js';
 
 export const STORAGE_KEY = 'gimnasio_v2';
 const LEGACY_KEY = 'musculacion_v1';
@@ -32,7 +37,48 @@ export const DEFAULT_SETTINGS = {
 };
 
 function emptyState() {
-  return { routines: [], activeRoutineId: null, logs: [], settings: { ...DEFAULT_SETTINGS }, selectedDayId: null };
+  return {
+    routines: [], activeRoutineId: null, logs: [], settings: { ...DEFAULT_SETTINGS }, selectedDayId: null,
+    categories: DEFAULT_CATEGORIES.map(c => ({ ...c })), profile: { heightCm: null }, measurements: [],
+  };
+}
+
+/** Completa campos que se agregaron con el tiempo y activa las categorías del usuario. */
+function normalizeState(st) {
+  st.settings = { ...DEFAULT_SETTINGS, ...(st.settings || {}) };
+  if (!Array.isArray(st.categories) || !st.categories.length) st.categories = DEFAULT_CATEGORIES.map(c => ({ ...c }));
+  for (const c of st.categories) if (c.base === undefined) c.base = DEFAULT_CATEGORIES.find(d => d.name === c.name)?.base || null;
+  st.profile = { heightCm: null, ...(st.profile || {}) };
+  if (!Array.isArray(st.measurements)) st.measurements = [];
+  setCategories(st.categories);
+  reassignUnknownGroups(st);
+  return st;
+}
+
+/**
+ * Todo ejercicio o serie cuya categoría no existe (por ejemplo el viejo
+ * "Otro", o una categoría borrada) se reasigna: por el nombre del
+ * ejercicio, si no por el título del día, si no por la categoría más
+ * común del día, y si no a la primera categoría.
+ */
+function reassignUnknownGroups(st) {
+  const valid = new Set(st.categories.map(c => c.name));
+  const first = st.categories[0].name;
+  const byKey = new Map();
+  for (const r of st.routines) {
+    for (const day of r.days) {
+      const counts = new Map();
+      for (const ex of day.exercises) if (valid.has(ex.muscleGroup)) counts.set(ex.muscleGroup, (counts.get(ex.muscleGroup) || 0) + 1);
+      const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      for (const ex of day.exercises) {
+        if (!valid.has(ex.muscleGroup)) ex.muscleGroup = guessMuscleGroup(ex.name) || guessMuscleGroup(day.name) || dominant || first;
+        byKey.set(normalizeName(ex.name), ex.muscleGroup);
+      }
+    }
+  }
+  for (const l of st.logs) {
+    if (!valid.has(l.muscleGroup)) l.muscleGroup = byKey.get(l.exerciseKey) || guessMuscleGroup(l.exerciseName) || first;
+  }
 }
 
 /** Convierte la rutina única de la app anterior (v1) en una rutina del nuevo modelo. */
@@ -56,7 +102,7 @@ function migrateLegacy() {
         exercises: (d.exercises || []).filter(e => e.name).map(e => ({
           id: e.id || uid(),
           name: e.name,
-          muscleGroup: 'Otro',
+          muscleGroup: '', // se completa en normalizeState
           sets: e.sets || 3,
           repsScheme: [e.reps || 10],
           restSeconds: e.rest || 90,
@@ -83,7 +129,7 @@ function migrateLegacy() {
         exerciseId: l.exerciseId,
         exerciseName: ex ? ex.name : '',
         exerciseKey: ex ? normalizeName(ex.name) : '',
-        muscleGroup: ex ? ex.muscleGroup : 'Otro',
+        muscleGroup: ex ? ex.muscleGroup : '',
         weight: l.weight,
         reps: l.reps,
         setNumber: 1,
@@ -100,19 +146,105 @@ export function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      // completar settings faltantes si se agregaron campos nuevos con el tiempo
-      parsed.settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
-      return parsed;
+      const st = normalizeState(JSON.parse(raw));
+      saveState(st);
+      return st;
     }
   } catch (e) { /* localStorage corrupto o bloqueado: seguimos con estado vacío/migrado */ }
 
   const migrated = migrateLegacy();
   if (migrated) {
+    normalizeState(migrated);
     saveState(migrated);
     return migrated;
   }
-  return emptyState();
+  return normalizeState(emptyState());
+}
+
+/* ---------------- Categorías: renombrar / borrar actualiza rutinas e historial ---------------- */
+
+export function renameCategory(st, oldName, newName) {
+  const cat = st.categories.find(c => c.name === oldName);
+  if (!cat) return;
+  cat.name = newName;
+  for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) if (ex.muscleGroup === oldName) ex.muscleGroup = newName;
+  for (const l of st.logs) if (l.muscleGroup === oldName) l.muscleGroup = newName;
+  setCategories(st.categories);
+}
+
+export function deleteCategory(st, name, moveTo) {
+  st.categories = st.categories.filter(c => c.name !== name);
+  for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) if (ex.muscleGroup === name) ex.muscleGroup = moveTo;
+  for (const l of st.logs) if (l.muscleGroup === name) l.muscleGroup = moveTo;
+  setCategories(st.categories);
+}
+
+export function categoryUsage(st, name) {
+  let exercises = 0;
+  for (const r of st.routines) for (const d of r.days) for (const ex of d.exercises) if (ex.muscleGroup === name) exercises++;
+  return { exercises, sets: st.logs.filter(l => l.muscleGroup === name).length };
+}
+
+export function categoryNameTaken(st, name, except = null) {
+  return st.categories.some(c => c.name !== except && norm(c.name) === norm(name));
+}
+
+/* ---------------- Medidas corporales ---------------- */
+
+export const MEASURE_FIELDS = [
+  { key: 'weight', label: 'Peso', unit: 'kg' },
+  { key: 'waist', label: 'Cintura', unit: 'cm' },
+  { key: 'chest', label: 'Pecho', unit: 'cm' },
+  { key: 'arm', label: 'Brazo', unit: 'cm' },
+  { key: 'leg', label: 'Pierna', unit: 'cm' },
+];
+
+/** Guarda (o completa, si ya hay una del mismo día) una medición. */
+export function upsertMeasurement(st, date, values) {
+  let entry = st.measurements.find(m => m.date === date);
+  if (!entry) {
+    entry = { id: uid(), date };
+    for (const f of MEASURE_FIELDS) entry[f.key] = null;
+    st.measurements.push(entry);
+  }
+  for (const f of MEASURE_FIELDS) if (values[f.key] != null) entry[f.key] = values[f.key];
+  st.measurements.sort((a, b) => a.date.localeCompare(b.date));
+  return entry;
+}
+
+/* ---------------- Exportar a CSV (para analizar en Excel / Google Sheets) ---------------- */
+
+/** Punto y coma + coma decimal + BOM: así lo abre bien Excel configurado en español. */
+function toCsv(header, rows) {
+  const cell = (v) => {
+    if (v == null) return '';
+    const s = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return '\ufeff' + [header, ...rows].map(r => r.map(cell).join(';')).join('\r\n');
+}
+
+function download(filename, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function exportMeasurementsCsv(st) {
+  const h = st.profile.heightCm;
+  const rows = st.measurements.map(m => [
+    m.date, m.weight, m.waist, m.chest, m.arm, m.leg,
+    h && m.weight ? Math.round((m.weight / ((h / 100) ** 2)) * 10) / 10 : null,
+  ]);
+  download(`medidas-${todayISO()}.csv`, toCsv(['Fecha', 'Peso (kg)', 'Cintura (cm)', 'Pecho (cm)', 'Brazo (cm)', 'Pierna (cm)', 'IMC'], rows), 'text/csv;charset=utf-8');
+}
+
+export function exportWorkoutsCsv(st) {
+  const rows = st.logs.slice().sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts)
+    .map(l => [l.date, l.exerciseName, l.muscleGroup, l.setNumber, l.weight, l.reps, l.phase === 'descarga' ? 'Descarga' : 'Carga']);
+  download(`entrenamientos-${todayISO()}.csv`, toCsv(['Fecha', 'Ejercicio', 'Grupo muscular', 'Serie', 'Peso (kg)', 'Reps', 'Fase'], rows), 'text/csv;charset=utf-8');
 }
 
 export function saveState(state) {
@@ -190,6 +322,5 @@ export function exportBackup(state) {
 export function importBackup(json) {
   const parsed = JSON.parse(json);
   if (!parsed || !Array.isArray(parsed.routines)) throw new Error('Archivo inválido');
-  parsed.settings = { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) };
-  return parsed;
+  return normalizeState(parsed);
 }

@@ -24,7 +24,7 @@
  */
 
 import { uid } from './state.js';
-import { guessMuscleGroup } from './muscleGroups.js';
+import { guessMuscleGroup, getCategories } from './muscleGroups.js';
 
 const MAMMOTH_LOCAL_PATH = new URL('./vendor/mammoth.browser.min.js', import.meta.url).href;
 let mammothLoadPromise = null;
@@ -149,6 +149,8 @@ export function parseRoutineText(text) {
     }
   }
 
+  for (const day of days) fillMissingGroups(day);
+
   const totalExercises = days.reduce((a, d) => a + d.exercises.length, 0);
   const warnings = [];
   if (!totalExercises) {
@@ -158,6 +160,21 @@ export function parseRoutineText(text) {
   }
 
   return { days, warnings };
+}
+
+/**
+ * Ejercicios sin pistas de categoría: se usa la del título del día
+ * ("Día 3 - Cuadriceps gluteos" → Piernas); si el título no ayuda, la más
+ * común entre los ejercicios de ese día; y si no, la primera categoría.
+ * Siempre queda algo editable en la pantalla de revisión.
+ */
+export function fillMissingGroups(day) {
+  const known = day.exercises.map(e => e.muscleGroup).filter(Boolean);
+  const counts = new Map();
+  for (const g of known) counts.set(g, (counts.get(g) || 0) + 1);
+  const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const fallback = guessMuscleGroup(day.name) || dominant || getCategories()[0]?.name || '';
+  for (const ex of day.exercises) if (!ex.muscleGroup) ex.muscleGroup = fallback;
 }
 
 export const PASTE_PLACEHOLDER = `Día 1 - Pecho y Tríceps

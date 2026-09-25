@@ -34,6 +34,13 @@ dispositivo (no hay servidor ni cuenta).
   tiempo (y su desglose por ejercicio), o evolución del peso máximo de un
   ejercicio puntual, con historial completo.
 
+- **Cuerpo** — altura, peso y medidas (cintura, pecho, brazo, pierna) con
+  fecha: IMC, evolución de cada medida con gráfico, historial editable y
+  exportación a .csv para analizar en Excel o Google Sheets.
+
+Las categorías (grupos musculares) se pueden agregar, renombrar y borrar
+desde Rutinas → Categorías: los cambios se aplican a rutinas e historial.
+
 Desde el ⚙️ del header se ajustan los parámetros del entrenador (semanas
 por bloque, % de descarga, incrementos de peso) y se puede descargar/
 restaurar un respaldo en `.json` (recomendado: los datos viven solo en

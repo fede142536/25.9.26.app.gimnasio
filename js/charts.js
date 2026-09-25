@@ -11,7 +11,8 @@
  * `hollow` dibuja el punto vacío (ej. sesiones de descarga: livianas a propósito).
  */
 export function lineChart(container, points, opts = {}) {
-  const { width = 320, height = 160, seriesColorVar = '--series-1', unit = '' } = opts;
+  // includeZero: false para medidas corporales, donde lo que importa es la variación (78,9 vs 80,4 kg)
+  const { width = 320, height = 160, seriesColorVar = '--series-1', unit = '', includeZero = true } = opts;
   container.innerHTML = '';
   if (!points.length) {
     container.innerHTML = '<div class="chart-empty">Todavía no hay datos para graficar.</div>';
@@ -22,9 +23,11 @@ export function lineChart(container, points, opts = {}) {
   const w = width - pad.left - pad.right;
   const h = height - pad.top - pad.bottom;
   const ys = points.map(p => p.y);
-  const minY = Math.min(...ys, 0);
-  const tickStep = niceStep((Math.max(...ys) * 1.1 || 1) / 3);
-  const maxY = Math.ceil((Math.max(...ys) * 1.1 || 1) / tickStep) * tickStep;
+  const lo = includeZero ? Math.min(...ys, 0) : Math.min(...ys);
+  const hi = includeZero ? (Math.max(...ys) * 1.1 || 1) : Math.max(...ys);
+  const tickStep = niceStep(Math.max(hi - lo, includeZero ? 0 : Math.max(...ys) * 0.04, 0.5) / 3);
+  const minY = includeZero ? lo : Math.floor(lo / tickStep - 0.5) * tickStep;
+  const maxY = Math.ceil((includeZero ? hi : hi + tickStep * 0.5) / tickStep) * tickStep;
   const xFor = i => pad.left + (points.length === 1 ? w / 2 : (i / (points.length - 1)) * w);
   const yFor = v => pad.top + h - ((v - minY) / (maxY - minY || 1)) * h;
 

@@ -165,7 +165,7 @@ nav.tabbar button {
   transition: color .15s ease;
 }
 nav.tabbar button .tab-icon {
-  width: 52px; height: 28px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  width: 48px; height: 28px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
   transition: background-color .2s ease;
 }
 nav.tabbar button.active { color: var(--accent); }
@@ -523,6 +523,8 @@ select.ex-picker { width: 100%; padding: 12px; border-radius: 12px; background: 
 }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sheet-in { from { transform: translateY(24px); } to { transform: none; } }
+/* al redibujar un panel ya abierto (renombrar, agregar…) no se repite la animación de entrada */
+.modal-overlay.static, .modal-overlay.static .modal-box { animation: none; }
 .modal-box {
   background: var(--surface); border-radius: 22px 22px 0 0; padding: 10px 20px calc(20px + env(safe-area-inset-bottom, 0px));
   max-width: 560px; width: 100%; max-height: 88vh; overflow-y: auto; animation: sheet-in .22s ease-out;
@@ -535,6 +537,55 @@ select.ex-picker { width: 100%; padding: 12px; border-radius: 12px; background: 
 .modal-box .field input[type="number"] { width: 100%; padding: 10px 12px; }
 .modal-box input[type="range"] { width: 100%; accent-color: var(--accent); background: transparent; border: none; }
 .modal-close-row { display: flex; justify-content: flex-end; margin-top: 16px; gap: 8px; }
+
+/* ============================================================ Categorías (panel) ============================================================ */
+.cat-list { margin: 4px 0 14px; }
+.cat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.cat-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.cat-name { flex: 1; min-width: 0; padding: 9px 10px; font-weight: 600; background: var(--surface-2); }
+.cat-usage { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.cat-delete { background: var(--surface-2); border-radius: 12px; padding: 12px; margin: 8px 0; }
+.cat-delete select { width: 100%; padding: 10px; margin-bottom: 10px; background: var(--surface); }
+.cat-add { display: flex; gap: 8px; }
+.cat-add input { flex: 1; min-width: 0; padding: 11px 12px; }
+.cat-add .btn-primary { width: auto; padding: 11px 14px; }
+.btn-primary.danger { background: var(--danger); color: #fff; }
+.icon-btn.danger { color: var(--danger); }
+
+/* ============================================================ Cuerpo ============================================================ */
+.body-hero { display: flex; gap: 14px; align-items: stretch; }
+.bh-main { flex: 1; min-width: 0; }
+.bh-main .label, .bh-stat .label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.bh-main .value { font-family: var(--font-display); font-size: 40px; font-weight: 600; line-height: 1.05; margin-top: 2px; }
+.bh-main .value small { font-size: 17px; font-weight: 500; color: var(--text-muted); }
+.bh-main .sub { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+.bh-main .sub b { color: var(--text); }
+.bh-side { display: flex; flex-direction: column; gap: 8px; width: 104px; flex-shrink: 0; }
+.bh-stat {
+  flex: 1; text-align: left; background: var(--surface-2); border: none; border-radius: 12px; padding: 8px 10px;
+  font-family: var(--font-body); color: var(--text); display: flex; flex-direction: column; justify-content: center;
+}
+.bh-stat b { font-family: var(--font-display); font-size: 18px; font-weight: 600; }
+button.bh-stat b { color: var(--accent-strong); }
+input.body-date { width: 100%; padding: 11px 12px; margin-bottom: 12px; background: var(--surface-2); }
+.measure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.measure-grid > * { min-width: 0; }
+.measure-field { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; display: block; }
+.measure-field > span { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); }
+.mf-input { display: flex; align-items: baseline; gap: 4px; }
+.mf-input input {
+  flex: 1; min-width: 0; width: 100%; border: none; background: transparent; padding: 2px 0 0;
+  font-family: var(--font-display); font-size: 24px; font-weight: 600; color: var(--text);
+}
+.mf-input input::placeholder { color: var(--text-faint); opacity: 0.6; }
+.mf-input input:focus { outline: none; }
+.mf-input small { font-size: 12px; color: var(--text-muted); }
+.segmented.scroll { overflow-x: auto; scrollbar-width: none; }
+.segmented.scroll::-webkit-scrollbar { display: none; }
+.segmented.scroll button { flex: 1 0 auto; padding: 9px 12px; }
+.row-actions { display: flex; gap: 2px; }
+.row-actions .icon-btn { padding: 4px 8px; font-size: 12.5px; }
+.hs-sets b { color: var(--text); font-weight: 600; }
 
 /* ============================================================ Diagnóstico de instalación ============================================================ */
 .diag-output {

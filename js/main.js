@@ -2,9 +2,11 @@ import {
   loadState, saveState, uid, todayISO, normalizeName,
   getRoutine, getActiveRoutine, exportBackup, importBackup, DEFAULT_SETTINGS,
   repsForSetIndex, repsSchemeLabel, parseRepsSchemeInput,
+  renameCategory, deleteCategory, categoryUsage, categoryNameTaken,
+  MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
 } from './state.js';
-import { MUSCLE_GROUPS, muscleGroupClass, guessMuscleGroup, slotFor } from './muscleGroups.js';
-import { extractTextFromDocx, parseRoutineText, PASTE_PLACEHOLDER } from './parser.js';
+import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
+import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek } from './coach.js';
 import { restTimer, startRest, skipRest, addRestTime } from './timer.js';
 import { icon } from './icons.js';
@@ -20,9 +22,12 @@ let progressExKey = null;
 let routineWizard = null; // asistente de creación/edición de rutina
 let modalView = null;     // 'settings' | null
 let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no, el primero sin completar)
+let catDeleting = null;   // índice de la categoría que se está por borrar (pide a dónde mover sus ejercicios)
+let bodyForm = null;      // formulario de medidas en curso: { date, editingId, values: { weight: '78,4', ... } }
+let bodyMetric = 'weight';
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.4';
+const APP_VERSION = '2026-09-25.5';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -59,6 +64,7 @@ function render() {
   if (currentView === 'hoy') renderHoy(main);
   else if (currentView === 'rutinas') renderRutinas(main);
   else if (currentView === 'entrenador') renderEntrenador(main);
+  else if (currentView === 'cuerpo') renderCuerpo(main);
   else renderProgreso(main);
   renderModal();
   renderRestBar();
@@ -324,7 +330,12 @@ function renderRutinas(main) {
   }
 
   html += `<button class="btn-primary" style="margin-top:4px" onclick="App.startNewRoutine()">${icon('plus')} Nueva rutina</button>
-    <p class="hint" style="text-align:center;margin-top:12px">El historial se guarda por ejercicio: aunque cambies de rutina cada 3 meses, tu progreso sigue.</p>`;
+    <p class="hint" style="text-align:center;margin-top:12px">El historial se guarda por ejercicio: aunque cambies de rutina cada 3 meses, tu progreso sigue.</p>
+    <h2 class="section-title">Categorías</h2>
+    <div class="card">
+      <div class="chip-row">${getCategories().map(c => `<span class="mg-chip ${muscleGroupClass(c.name)}">${escapeHtml(c.name)}</span>`).join('')}</div>
+      <button class="btn-secondary" onclick="App.openCategories()">Agregar o editar categorías</button>
+    </div>`;
   main.innerHTML = html;
 }
 
@@ -444,7 +455,7 @@ function renderWizard(main) {
       html += `<div class="ex-row">
         <input placeholder="Ejercicio" value="${escapeHtml(ex.name)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','name',this.value)">
         <select onchange="App.wizardUpdateEx('${day.id}','${ex.id}','muscleGroup',this.value)">
-          ${MUSCLE_GROUPS.map(g => `<option value="${g.key}" ${g.key === ex.muscleGroup ? 'selected' : ''}>${g.key}</option>`).join('')}
+          ${getCategories().map(c => `<option value="${escapeHtml(c.name)}" ${c.name === ex.muscleGroup ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
         <input type="number" title="series" value="${ex.sets}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','sets',this.value)">
         <input type="text" title="reps (ej: 10 o 10-8-8-6)" placeholder="reps" value="${repsSchemeLabel(ex)}" onchange="App.wizardUpdateEx('${day.id}','${ex.id}','repsScheme',this.value)">
@@ -468,7 +479,9 @@ function wizardAddDay() { routineWizard.days.push({ id: uid(), name: `Día ${rou
 function wizardRemoveDay(id) { routineWizard.days = routineWizard.days.filter(d => d.id !== id); render(); }
 function wizardRenameDay(id, name) { routineWizard.days.find(d => d.id === id).name = name; }
 function wizardAddExercise(dayId) {
-  routineWizard.days.find(d => d.id === dayId).exercises.push({ id: uid(), name: '', muscleGroup: 'Otro', sets: 4, repsScheme: [10], restSeconds: 90 });
+  const day = routineWizard.days.find(d => d.id === dayId);
+  // groupAuto: la categoría se sigue adivinando por el nombre hasta que el usuario elija una a mano
+  day.exercises.push({ id: uid(), name: '', muscleGroup: guessMuscleGroup(day.name) || getCategories()[0].name, groupAuto: true, sets: 4, repsScheme: [10], restSeconds: 90 });
   render();
 }
 function wizardRemoveEx(dayId, exId) {
@@ -478,8 +491,11 @@ function wizardRemoveEx(dayId, exId) {
 }
 function wizardUpdateEx(dayId, exId, field, value) {
   const ex = routineWizard.days.find(d => d.id === dayId).exercises.find(e => e.id === exId);
-  if (field === 'name') { ex.name = value; if (ex.muscleGroup === 'Otro') ex.muscleGroup = guessMuscleGroup(value); }
-  else if (field === 'muscleGroup') ex.muscleGroup = value;
+  if (field === 'name') {
+    ex.name = value;
+    const guess = ex.groupAuto && guessMuscleGroup(value);
+    if (guess && guess !== ex.muscleGroup) { ex.muscleGroup = guess; render(); }
+  } else if (field === 'muscleGroup') { ex.muscleGroup = value; ex.groupAuto = false; }
   else if (field === 'repsScheme') ex.repsScheme = parseRepsSchemeInput(value);
   else ex[field] = parseFloat(value) || 0;
 }
@@ -487,7 +503,8 @@ function wizardUpdateEx(dayId, exId, field, value) {
 function saveWizard() {
   const w = routineWizard;
   if (!w.name.trim()) { alert('Ponele un nombre a la rutina.'); return; }
-  const cleanDays = w.days.map(d => ({ ...d, exercises: d.exercises.filter(e => e.name.trim()) }));
+  const cleanDays = w.days.map(d => ({ ...d, exercises: d.exercises.filter(e => e.name.trim()).map(({ groupAuto, ...e }) => e) }));
+  cleanDays.forEach(fillMissingGroups);
 
   if (w.editingId) {
     const r = getRoutine(state, w.editingId);
@@ -583,10 +600,141 @@ function setCurrentWeek(weekInBlock) {
   render();
 }
 
+/* ================================================================ Vista: Cuerpo (altura, peso y medidas) ================================================================ */
+
+function parseDecimal(v) {
+  const n = parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function latestValue(key) {
+  for (let i = state.measurements.length - 1; i >= 0; i--) if (state.measurements[i][key] != null) return state.measurements[i];
+  return null;
+}
+function bmi(weight) {
+  const h = state.profile.heightCm;
+  return h && weight ? Math.round((weight / ((h / 100) ** 2)) * 10) / 10 : null;
+}
+
+function renderCuerpo(main) {
+  if (!bodyForm) bodyForm = { date: todayISO(), editingId: null, values: {} };
+  const lastW = latestValue('weight');
+  const firstW = state.measurements.find(m => m.weight != null);
+  const h = state.profile.heightCm;
+  const wDiff = lastW && firstW && lastW !== firstW ? Math.round((lastW.weight - firstW.weight) * 10) / 10 : null;
+
+  let html = `<div class="card body-hero" style="margin-top:4px">
+    <div class="bh-main">
+      <div class="label">Peso actual</div>
+      <div class="value">${lastW ? `${fmtNum(lastW.weight)}<small> kg</small>` : '—'}</div>
+      <div class="sub">${lastW ? `al ${formatDate(lastW.date).slice(0, 5)}` : 'Sin registros todavía'}${wDiff ? ` · <b>${wDiff > 0 ? '+' : '−'}${fmtNum(Math.abs(wDiff))} kg</b> desde el ${formatDate(firstW.date).slice(0, 5)}` : ''}</div>
+    </div>
+    <div class="bh-side">
+      <button class="bh-stat" onclick="App.editHeight()"><span class="label">Altura</span><b>${h ? `${fmtNum(h)} cm` : 'Cargar'}</b></button>
+      <div class="bh-stat"><span class="label">IMC</span><b>${bmi(lastW?.weight) != null ? fmtNum(bmi(lastW.weight)) : '—'}</b></div>
+    </div>
+  </div>`;
+
+  // formulario
+  const v = bodyForm.values;
+  html += `<h2 class="section-title">${bodyForm.editingId ? 'Editar medición' : 'Registrar medidas'}</h2>
+  <div class="card">
+    <label class="field-label">Fecha</label>
+    <input class="body-date" type="date" value="${bodyForm.date}" max="${todayISO()}" oninput="App.bodySetDate(this.value)">
+    <div class="measure-grid">
+      ${MEASURE_FIELDS.map(f => `<label class="measure-field"><span>${f.label}</span>
+        <div class="mf-input"><input type="text" inputmode="decimal" autocomplete="off" placeholder="${latestValue(f.key) ? fmtNum(latestValue(f.key)[f.key]) : '—'}" value="${escapeHtml(v[f.key] ?? '')}" oninput="App.bodySetValue('${f.key}', this.value)"><small>${f.unit}</small></div>
+      </label>`).join('')}
+    </div>
+    <p class="hint">Completá solo lo que midas ese día. Lo gris es tu última medición.</p>
+    <div class="btn-row">
+      ${bodyForm.editingId ? `<button class="btn-secondary" onclick="App.bodyCancelEdit()">Cancelar</button>` : ''}
+      <button class="btn-primary" onclick="App.saveMeasurements()">${icon('check')} ${bodyForm.editingId ? 'Guardar cambios' : 'Guardar medidas'}</button>
+    </div>
+  </div>`;
+
+  if (state.measurements.length) {
+    const field = MEASURE_FIELDS.find(f => f.key === bodyMetric);
+    const series = state.measurements.filter(m => m[bodyMetric] != null);
+    const first = series[0], last = series[series.length - 1];
+    const diff = series.length > 1 ? Math.round((last[bodyMetric] - first[bodyMetric]) * 10) / 10 : null;
+    html += `<h2 class="section-title">Evolución</h2>
+      <div class="segmented scroll">${MEASURE_FIELDS.map(f => `<button class="${f.key === bodyMetric ? 'active' : ''}" onclick="App.setBodyMetric('${f.key}')">${f.label}</button>`).join('')}</div>
+      ${series.length ? `<div class="stat-row">
+        <div class="stat-tile"><div class="label">Última</div><div class="value">${fmtNum(last[bodyMetric])}<small> ${field.unit}</small></div><div class="sub">${formatDate(last.date).slice(0, 5)}</div></div>
+        <div class="stat-tile"><div class="label">Cambio</div><div class="value">${diff == null ? '—' : `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmtNum(Math.abs(diff))}<small> ${field.unit}</small>`}</div><div class="sub">${diff == null ? 'Necesita 2 mediciones' : `desde el ${formatDate(first.date).slice(0, 5)}`}</div></div>
+      </div>
+      <div class="chart-box" id="chartBody"></div>` : `<div class="card"><p class="hint" style="margin:0">Todavía no registraste ${field.label.toLowerCase()}.</p></div>`}
+      <h2 class="section-title">Historial</h2>
+      <div class="card flush">${state.measurements.slice().reverse().map(m => `<div class="hist-session">
+        <div class="hs-head">
+          <span class="d">${formatDate(m.date)}</span>
+          <span class="row-actions"><button class="icon-btn" onclick="App.editMeasurement('${m.id}')">Editar</button><button class="icon-btn danger" onclick="App.deleteMeasurement('${m.id}')">Borrar</button></span>
+        </div>
+        <div class="hs-sets">${MEASURE_FIELDS.filter(f => m[f.key] != null).map(f => `${f.label} <b>${fmtNum(m[f.key])} ${f.unit}</b>`).join(' · ')}</div>
+      </div>`).join('')}</div>
+      <button class="btn-secondary" style="margin-top:4px" onclick="App.exportMeasures()">${icon('download')} Exportar a Excel (.csv)</button>`;
+    main.innerHTML = html;
+    if (series.length) lineChart(document.getElementById('chartBody'), series.map(m => ({ x: m.date, y: m[bodyMetric], label: formatDate(m.date) })), { seriesColorVar: '--series-1', unit: ` ${field.unit}`, includeZero: false, ariaLabel: `Evolución de ${field.label}` });
+    return;
+  }
+  main.innerHTML = html;
+}
+
+function bodySetDate(v) { bodyForm.date = v || todayISO(); }
+function bodySetValue(key, v) { bodyForm.values[key] = v; }
+function setBodyMetric(k) { bodyMetric = k; render(); }
+function bodyCancelEdit() { bodyForm = null; render(); }
+
+function saveMeasurements() {
+  const values = {};
+  const invalid = [];
+  for (const f of MEASURE_FIELDS) {
+    const raw = bodyForm.values[f.key];
+    if (raw == null || String(raw).trim() === '') { values[f.key] = null; continue; }
+    const n = parseDecimal(raw);
+    if (n == null) invalid.push(f.label); else values[f.key] = n;
+  }
+  if (invalid.length) { alert(`Revisá: ${invalid.join(', ')}. Usá solo números (ej: 78,5).`); return; }
+  if (bodyForm.editingId) {
+    const entry = state.measurements.find(m => m.id === bodyForm.editingId);
+    Object.assign(entry, values, { date: bodyForm.date });
+    state.measurements.sort((a, b) => a.date.localeCompare(b.date));
+  } else {
+    if (MEASURE_FIELDS.every(f => values[f.key] == null)) { alert('Cargá al menos una medida.'); return; }
+    upsertMeasurement(state, bodyForm.date, values);
+  }
+  bodyForm = null;
+  persist(); render();
+}
+function editMeasurement(id) {
+  const m = state.measurements.find(x => x.id === id);
+  const values = {};
+  for (const f of MEASURE_FIELDS) values[f.key] = m[f.key] != null ? fmtNum(m[f.key]) : '';
+  bodyForm = { date: m.date, editingId: id, values };
+  render();
+  document.getElementById('main').scrollTo({ top: 0, behavior: 'smooth' });
+}
+function deleteMeasurement(id) {
+  const m = state.measurements.find(x => x.id === id);
+  if (!confirm(`¿Borrar la medición del ${formatDate(m.date)}?`)) return;
+  state.measurements = state.measurements.filter(x => x.id !== id);
+  if (bodyForm?.editingId === id) bodyForm = null;
+  persist(); render();
+}
+function editHeight() {
+  const current = state.profile.heightCm ? fmtNum(state.profile.heightCm) : '';
+  const value = prompt('Tu altura en centímetros (ej: 178):', current);
+  if (value == null) return;
+  const n = parseDecimal(value);
+  if (n == null || n < 100 || n > 250) { alert('Ingresá la altura en centímetros, entre 100 y 250.'); return; }
+  state.profile.heightCm = n;
+  persist(); render();
+}
+
 /* ================================================================ Vista: Progreso ================================================================ */
 
 function distinctGroupsLogged() {
-  const order = MUSCLE_GROUPS.map(g => g.key);
+  const order = getCategories().map(c => c.name);
   return Array.from(new Set(state.logs.map(l => l.muscleGroup))).sort((a, b) => order.indexOf(a) - order.indexOf(b));
 }
 function distinctExercisesLogged() {
@@ -719,9 +867,18 @@ function closeModal() { modalView = null; render(); }
 
 function renderModal() {
   const host = document.getElementById('modalHost');
-  if (modalView !== 'settings') { host.innerHTML = ''; return; }
+  const alreadyOpen = !!host.querySelector(`.modal-overlay[data-view="${modalView}"]`);
+  if (modalView === 'categories') host.innerHTML = categoriesModalHtml();
+  else if (modalView === 'settings') host.innerHTML = settingsModalHtml();
+  else { host.innerHTML = ''; return; }
+  const overlay = host.querySelector('.modal-overlay');
+  overlay.dataset.view = modalView;
+  if (alreadyOpen) overlay.classList.add('static');
+}
+
+function settingsModalHtml() {
   const s = state.settings;
-  host.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this) App.closeModal()">
+  return `<div class="modal-overlay" onclick="if(event.target===this) App.closeModal()">
     <div class="modal-box">
       <h2>Configuración del entrenador</h2>
       <div class="field"><label>Semanas por bloque (antes de descargar)<span>${s.mesocycleWeeks}</span></label>
@@ -740,6 +897,14 @@ function renderModal() {
           Restaurar<input type="file" accept="application/json" style="display:none" onchange="App.doImport(this)">
         </label>
       </div>
+      <h2 style="font-size:15px;margin-top:18px">Exportar para analizar</h2>
+      <p class="hint">Archivos .csv que se abren en Excel o Google Sheets.</p>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="App.exportWorkouts()">${icon('download')} Entrenamientos</button>
+        <button class="btn-secondary" onclick="App.exportMeasures()">${icon('download')} Medidas</button>
+      </div>
+      <h2 style="font-size:15px;margin-top:18px">Categorías</h2>
+      <button class="btn-secondary" onclick="App.openCategories()">Agregar o editar categorías</button>
       <h2 style="font-size:15px;margin-top:18px">Diagnóstico de instalación</h2>
       <p class="hint">Versión ${APP_VERSION}. Si la app no se deja instalar, tocá el botón y mandá una captura de lo que aparece.</p>
       <button class="btn-secondary" onclick="App.runInstallDiagnostics()">Ver diagnóstico</button>
@@ -747,6 +912,72 @@ function renderModal() {
       <div class="modal-close-row"><button class="btn-primary" style="width:auto;padding:9px 20px" onclick="App.closeModal()">Cerrar</button></div>
     </div>
   </div>`;
+}
+
+/* ---------------- Categorías (grupos musculares) ---------------- */
+
+function openCategories() { modalView = 'categories'; catDeleting = null; render(); }
+
+function categoriesModalHtml() {
+  const cats = getCategories();
+  const rows = cats.map((c, i) => {
+    const usage = categoryUsage(state, c.name);
+    const used = usage.exercises || usage.sets;
+    const others = cats.filter((_, j) => j !== i);
+    const del = catDeleting === i ? `<div class="cat-delete">
+        ${used ? `<label class="field-label">Mover sus ${usage.exercises} ejercicios y ${usage.sets} series a</label>
+          <select id="catMoveTo">${others.map(o => `<option value="${escapeHtml(o.name)}">${escapeHtml(o.name)}</option>`).join('')}</select>` : '<p class="hint" style="margin:0 0 8px">No la usa ningún ejercicio.</p>'}
+        <div class="btn-row"><button class="btn-secondary" onclick="App.cancelDeleteCat()">Cancelar</button><button class="btn-primary danger" onclick="App.confirmDeleteCat(${i})">Borrar</button></div>
+      </div>` : '';
+    return `<div class="cat-row">
+        <span class="cat-dot" style="background:var(--series-${c.slot})"></span>
+        <input class="cat-name" value="${escapeHtml(c.name)}" aria-label="Nombre de la categoría" onchange="App.renameCat(${i}, this.value)">
+        <span class="cat-usage">${usage.exercises} ej.</span>
+        ${cats.length > 1 ? `<button class="icon-btn" onclick="App.askDeleteCat(${i})">Borrar</button>` : ''}
+      </div>${del}`;
+  }).join('');
+  const full = cats.length >= MAX_CATEGORIES;
+  return `<div class="modal-overlay" onclick="if(event.target===this) App.closeModal()">
+    <div class="modal-box">
+      <h2>Categorías</h2>
+      <p class="hint">Tocá un nombre para cambiarlo: se actualiza en tus rutinas y en todo tu historial.</p>
+      <div class="cat-list">${rows}</div>
+      ${full ? `<p class="hint">Llegaste al máximo de ${MAX_CATEGORIES} categorías (una por color).</p>` : `<div class="cat-add">
+        <input id="newCatName" placeholder="Nueva categoría (ej: Glúteos)" aria-label="Nueva categoría" onkeydown="if(event.key==='Enter') App.addCat()">
+        <button class="btn-primary" onclick="App.addCat()">${icon('plus')} Agregar</button>
+      </div>`}
+      <div class="modal-close-row"><button class="btn-secondary" style="width:auto;padding:9px 20px" onclick="App.closeModal()">Listo</button></div>
+    </div>
+  </div>`;
+}
+
+function renameCat(i, value) {
+  const cat = getCategories()[i];
+  const name = value.trim();
+  if (!name || name === cat.name) { render(); return; }
+  if (categoryNameTaken(state, name, cat.name)) { alert(`Ya existe la categoría "${name}".`); render(); return; }
+  renameCategory(state, cat.name, name);
+  if (progressGroup === cat.name) progressGroup = name;
+  persist(); render();
+}
+function addCat() {
+  const input = document.getElementById('newCatName');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  if (categoryNameTaken(state, name)) { alert(`Ya existe la categoría "${name}".`); return; }
+  state.categories.push({ name, slot: freeSlot() });
+  setCategories(state.categories);
+  persist(); render();
+}
+function askDeleteCat(i) { catDeleting = i; render(); }
+function cancelDeleteCat() { catDeleting = null; render(); }
+function confirmDeleteCat(i) {
+  const cat = getCategories()[i];
+  const others = getCategories().filter((_, j) => j !== i);
+  const moveTo = document.getElementById('catMoveTo')?.value || others[0].name;
+  deleteCategory(state, cat.name, moveTo);
+  catDeleting = null;
+  persist(); render();
 }
 
 function updateSetting(key, value) { state.settings[key] = parseFloat(value) || DEFAULT_SETTINGS[key]; persist(); render(); }
@@ -823,6 +1054,9 @@ window.App = {
   setProgressMode, setProgressGroup, setProgressExercise, openExercise,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
   runInstallDiagnostics, setCurrentWeek,
+  openCategories, renameCat, addCat, askDeleteCat, cancelDeleteCat, confirmDeleteCat,
+  bodySetDate, bodySetValue, setBodyMetric, bodyCancelEdit, saveMeasurements, editMeasurement, deleteMeasurement, editHeight,
+  exportWorkouts: () => exportWorkoutsCsv(state), exportMeasures: () => exportMeasurementsCsv(state),
 };
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });

@@ -18,6 +18,7 @@ const PATHS = {
   paste: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9zM9 11h6M9 15h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   download: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  ruler: '<path d="M4 16.5L16.5 4 20 7.5 7.5 20z"/><path d="M8 12.5l1.8 1.8M10.5 10l2.5 2.5M13 7.5l1.8 1.8"/>',
   flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
 };
 
