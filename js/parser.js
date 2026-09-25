@@ -1,11 +1,11 @@
 /**
  * Importar rutinas desde Word (.docx) o texto pegado — gratis y sin backend.
  *
- * Para .docx usamos mammoth.js desde un CDN público (solo extrae texto,
- * corre en el navegador, no sube el archivo a ningún servidor). Si no hay
- * conexión a internet para cargar esa librería, o el archivo es .doc viejo,
- * siempre queda la opción de pegar el texto de la rutina directamente:
- * esa vía funciona 100% offline.
+ * Para .docx usamos mammoth.js (incluida en el repo en js/vendor/, no vía
+ * CDN, para que funcione siempre: offline, o si el navegador/red bloquea
+ * CDNs externas). Solo extrae texto, corre en el navegador, no sube el
+ * archivo a ningún servidor. Si el archivo es .doc viejo (no .docx),
+ * siempre queda la opción de pegar el texto de la rutina directamente.
  *
  * El parseo de texto libre es heurístico y soporta el formato típico de
  * una rutina de gimnasio en español:
@@ -26,7 +26,7 @@
 import { uid } from './state.js';
 import { guessMuscleGroup } from './muscleGroups.js';
 
-const MAMMOTH_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+const MAMMOTH_LOCAL_PATH = new URL('./vendor/mammoth.browser.min.js', import.meta.url).href;
 let mammothLoadPromise = null;
 
 function loadMammoth() {
@@ -34,9 +34,9 @@ function loadMammoth() {
   if (mammothLoadPromise) return mammothLoadPromise;
   mammothLoadPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = MAMMOTH_CDN;
+    script.src = MAMMOTH_LOCAL_PATH;
     script.onload = () => resolve(window.mammoth);
-    script.onerror = () => reject(new Error('No se pudo cargar el lector de Word (¿sin conexión?). Probá pegando el texto de la rutina.'));
+    script.onerror = () => reject(new Error('No se pudo cargar el lector de Word. Probá pegando el texto de la rutina.'));
     document.head.appendChild(script);
   });
   return mammothLoadPromise;
