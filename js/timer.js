@@ -1,28 +1,38 @@
 /**
- * Timer de descanso entre series: cuenta regresiva con beep + vibración al
- * llegar a cero. Un solo timer activo a la vez (el de la serie que se acaba
- * de registrar); `onTick` se llama en cada segundo para poder re-renderizar.
+ * Timer de descanso entre series.
+ *
+ * Se ancla a la hora en que debería terminar (`endsAt`), no a "quedan N
+ * segundos": así, si el celular se bloquea o el navegador pausa la
+ * pestaña en segundo plano (algo habitual en Android/iOS para ahorrar
+ * batería, y que frena un `setInterval` común), al volver el tiempo
+ * restante se recalcula bien en vez de haber quedado congelado.
+ * `resyncRest` se llama al volver a la app (Page Visibility) para forzar
+ * ese recálculo inmediato, incluso si el descanso ya terminó estando en
+ * segundo plano (ahí recién se avisa con sonido y vibración).
  */
 
 let intervalId = null;
-export const restTimer = { active: false, secondsLeft: 0, total: 0, exerciseName: '' };
+export const restTimer = { active: false, endsAt: 0, total: 0, secondsLeft: 0, exerciseName: '' };
+
+function tick(onTick) {
+  restTimer.secondsLeft = Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000));
+  if (restTimer.secondsLeft <= 0 && restTimer.active) {
+    clearInterval(intervalId);
+    restTimer.active = false;
+    vibrate([200, 100, 200]);
+    playBeep();
+  }
+  onTick();
+}
 
 export function startRest(seconds, exerciseName, onTick) {
   clearInterval(intervalId);
   restTimer.active = true;
-  restTimer.secondsLeft = seconds;
   restTimer.total = seconds;
+  restTimer.endsAt = Date.now() + seconds * 1000;
+  restTimer.secondsLeft = seconds;
   restTimer.exerciseName = exerciseName;
-  intervalId = setInterval(() => {
-    restTimer.secondsLeft--;
-    if (restTimer.secondsLeft <= 0) {
-      clearInterval(intervalId);
-      restTimer.active = false;
-      vibrate([200, 100, 200]);
-      playBeep();
-    }
-    onTick();
-  }, 1000);
+  intervalId = setInterval(() => tick(onTick), 250);
   onTick();
 }
 
@@ -35,9 +45,15 @@ export function skipRest(onTick) {
 /** Suma (o resta, con un valor negativo) segundos al descanso en curso. */
 export function addRestTime(seconds, onTick) {
   if (!restTimer.active) return;
-  restTimer.secondsLeft = Math.max(1, restTimer.secondsLeft + seconds);
-  restTimer.total = Math.max(restTimer.total, restTimer.secondsLeft);
-  onTick();
+  restTimer.endsAt = Math.max(Date.now() + 1000, restTimer.endsAt + seconds * 1000);
+  restTimer.total = Math.max(restTimer.total, Math.ceil((restTimer.endsAt - Date.now()) / 1000));
+  tick(onTick);
+}
+
+/** Recalcula el tiempo restante ya (llamar al volver de segundo plano). No hace nada si no hay descanso activo. */
+export function resyncRest(onTick) {
+  if (!restTimer.active) return;
+  tick(onTick);
 }
 
 /** Beep corto con Web Audio API, sin archivos externos. */

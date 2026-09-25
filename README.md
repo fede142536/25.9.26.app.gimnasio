@@ -38,6 +38,15 @@ dispositivo (no hay servidor ni cuenta).
   fecha: IMC, evolución de cada medida con gráfico, historial editable y
   exportación a .csv para analizar en Excel o Google Sheets.
 
+Cualquier serie ya registrada (en "Hoy" o en el historial de "Progreso")
+se puede tocar para editar el peso/reps o borrarla, por si se cargó mal.
+
+Los datos viven solo en este dispositivo: la app pide almacenamiento
+persistente al navegador y recuerda hacer un respaldo si pasa mucho
+tiempo sin descargar uno. En "Hoy" se puede mantener la pantalla
+encendida (Wake Lock), y el timer de descanso se recalcula solo si el
+celular se bloquea o la app queda en segundo plano.
+
 Las categorías (grupos musculares) se pueden agregar, renombrar y borrar
 desde Rutinas → Categorías: los cambios se aplican a rutinas e historial.
 

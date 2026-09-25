@@ -15,11 +15,12 @@
  *   activeRoutineId,
  *   logs: [{ id, ts, date, routineId, dayId, exerciseId, exerciseName, exerciseKey,
  *            muscleGroup, weight, reps, setNumber, weekNumber, weekInBlock, phase }],
- *   settings: { mesocycleWeeks, deloadFactor, incrementUpper, incrementLower, repIncrement },
+ *   settings: { mesocycleWeeks, deloadFactor, incrementUpper, incrementLower, repIncrement, keepScreenOn },
  *   selectedDayId,
  *   categories: [{ name, slot }],            // grupos musculares editables (ver muscleGroups.js)
  *   profile: { heightCm },
- *   measurements: [{ id, date, weight, waist, chest, arm, leg }]  // kg y cm; campos vacíos = null
+ *   measurements: [{ id, date, weight, waist, chest, arm, leg }],  // kg y cm; campos vacíos = null
+ *   lastBackupAt, backupSnoozeUntil          // 'YYYY-MM-DD' o null; para recordar el respaldo
  * }
  */
 
@@ -34,12 +35,14 @@ export const DEFAULT_SETTINGS = {
   incrementUpper: 2.5,   // kg que se suman al progresar en tren superior/torso
   incrementLower: 5,     // kg que se suman al progresar en tren inferior
   repIncrement: 1,       // reps que se suman cuando no se puede subir el peso (ej. peso corporal)
+  keepScreenOn: true,    // pantalla encendida en 'Hoy' (Wake Lock API; si el navegador no la soporta, no hace nada)
 };
 
 function emptyState() {
   return {
     routines: [], activeRoutineId: null, logs: [], settings: { ...DEFAULT_SETTINGS }, selectedDayId: null,
     categories: DEFAULT_CATEGORIES.map(c => ({ ...c })), profile: { heightCm: null }, measurements: [],
+    lastBackupAt: null, backupSnoozeUntil: null,
   };
 }
 
@@ -50,6 +53,8 @@ function normalizeState(st) {
   for (const c of st.categories) if (c.base === undefined) c.base = DEFAULT_CATEGORIES.find(d => d.name === c.name)?.base || null;
   st.profile = { heightCm: null, ...(st.profile || {}) };
   if (!Array.isArray(st.measurements)) st.measurements = [];
+  if (st.lastBackupAt === undefined) st.lastBackupAt = null;
+  if (st.backupSnoozeUntil === undefined) st.backupSnoozeUntil = null;
   setCategories(st.categories);
   reassignUnknownGroups(st);
   return st;
@@ -305,6 +310,20 @@ export function repsSchemeLabel(ex) {
 export function parseRepsSchemeInput(text) {
   const nums = String(text).split(/[^0-9]+/).filter(Boolean).map(n => parseInt(n, 10)).filter(n => n > 0);
   return nums.length ? nums : [10];
+}
+
+/**
+ * ¿Conviene recordarle al usuario que descargue un respaldo? Sin backend,
+ * todo vive solo en este dispositivo — si el navegador borra el sitio o el
+ * celular se pierde/rompe, sin respaldo no queda nada.
+ */
+export function needsBackupReminder(st) {
+  const hasData = st.routines.length > 0 || st.logs.length > 0 || st.measurements.length > 0;
+  if (!hasData) return false;
+  if (st.backupSnoozeUntil && todayISO() < st.backupSnoozeUntil) return false;
+  // recién empezando: esperamos a que haya algo mínimamente valioso antes de molestar
+  if (!st.lastBackupAt) return st.logs.length >= 3 || st.measurements.length >= 1;
+  return daysBetween(st.lastBackupAt, todayISO()) >= 14;
 }
 
 export function exportBackup(state) {

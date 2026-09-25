@@ -1,14 +1,15 @@
 import {
   loadState, saveState, uid, todayISO, normalizeName,
-  getRoutine, getActiveRoutine, exportBackup, importBackup, DEFAULT_SETTINGS,
+  getRoutine, getActiveRoutine, findExercise, exportBackup, importBackup, DEFAULT_SETTINGS,
   repsForSetIndex, repsSchemeLabel, parseRepsSchemeInput,
   renameCategory, deleteCategory, categoryUsage, categoryNameTaken,
   MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
+  needsBackupReminder,
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek } from './coach.js';
-import { restTimer, startRest, skipRest, addRestTime } from './timer.js';
+import { restTimer, startRest, skipRest, addRestTime, resyncRest } from './timer.js';
 import { icon } from './icons.js';
 import { lineChart } from './charts.js';
 
@@ -25,9 +26,10 @@ let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no
 let catDeleting = null;   // índice de la categoría que se está por borrar (pide a dónde mover sus ejercicios)
 let bodyForm = null;      // formulario de medidas en curso: { date, editingId, values: { weight: '78,4', ... } }
 let bodyMetric = 'weight';
+let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.5';
+const APP_VERSION = '2026-09-25.6';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -68,9 +70,46 @@ function render() {
   else renderProgreso(main);
   renderModal();
   renderRestBar();
+  renderBackupBanner();
+  syncWakeLock();
+}
+
+/** Banner para recordar el respaldo: sin backend, los datos viven solo en este dispositivo. */
+function renderBackupBanner() {
+  const host = document.getElementById('backupHost');
+  if (!needsBackupReminder(state)) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="backup-banner">
+    <div class="bb-text">${icon('download')}<span>${state.lastBackupAt ? 'Hace tiempo que no hacés un respaldo.' : 'Ya tenés datos cargados: convendría hacer un respaldo.'}</span></div>
+    <div class="bb-actions">
+      <button onclick="App.doExport()">Descargar</button>
+      <button class="ghost" onclick="App.snoozeBackup()">Ahora no</button>
+    </div>
+  </div>`;
 }
 
 function switchTab(view) { currentView = view; render(); }
+
+/* ---------------- Pantalla encendida durante el entreno (Wake Lock) ---------------- */
+
+let wakeLock = null;
+/**
+ * Pide o libera el "wake lock" según corresponda: solo mientras se está en
+ * 'Hoy', con la pestaña visible y la opción activada. El navegador libera
+ * el wake lock solo al ocultar la pestaña, así que hay que volver a
+ * pedirlo al regresar (ver el listener de visibilitychange, más abajo).
+ */
+async function syncWakeLock() {
+  const wants = currentView === 'hoy' && state.settings.keepScreenOn && document.visibilityState === 'visible' && 'wakeLock' in navigator;
+  if (wants && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) { wakeLock = null; /* el navegador puede negarlo (batería baja, pestaña sin foco, etc.); no es crítico */ }
+  } else if (!wants && wakeLock) {
+    try { await wakeLock.release(); } catch (e) { /* ya liberado */ }
+    wakeLock = null;
+  }
+}
 
 /* ================================================================ Vista: Hoy ================================================================ */
 
@@ -172,9 +211,9 @@ function exerciseCardHtml(r, index, isCurrent, dayId) {
 
   const pills = Array.from({ length: ex.sets }, (_, s) => {
     const l = logged[s];
-    if (l) return `<div class="set-pill done"><span class="set-n">S${s + 1}</span><b>${l.weight > 0 ? fmtNum(l.weight) : '—'}</b><small>${l.weight > 0 ? 'kg ' : ''}× ${l.reps}</small></div>`;
+    if (l) return `<button class="set-pill done" onclick="event.stopPropagation(); App.editSetOpen('${l.id}')"><span class="set-n">S${s + 1}</span><b>${l.weight > 0 ? fmtNum(l.weight) : '—'}</b><small>${l.weight > 0 ? 'kg ' : ''}× ${l.reps}</small></button>`;
     const cls = isCurrent && s === prog.setsLogged ? 'current' : '';
-    return `<div class="set-pill ${cls}"><span class="set-n">S${s + 1}</span><b>${repsForSetIndex(ex, s)}</b><small>reps</small></div>`;
+    return `<span class="set-pill ${cls}"><span class="set-n">S${s + 1}</span><b>${repsForSetIndex(ex, s)}</b><small>reps</small></span>`;
   }).join('');
 
   const head = `<div class="ex-head">
@@ -252,6 +291,68 @@ function renderRestBar() {
       <button class="primary" onclick="App.skipRest()">Saltar</button>
     </div>
   </div>`;
+}
+
+/* ---------------- Editar/borrar una serie ya registrada ---------------- */
+
+function editSetOpen(logId) { editingLog = logId; modalView = 'editSet'; render(); }
+
+function editSetModalHtml() {
+  const log = state.logs.find(l => l.id === editingLog);
+  if (!log) { editingLog = null; modalView = null; return ''; }
+  return `<div class="modal-overlay" onclick="if(event.target===this) App.closeModal()">
+    <div class="modal-box">
+      <h2>Editar serie</h2>
+      <p class="hint" style="margin-top:-10px">${escapeHtml(log.exerciseName)} · serie ${log.setNumber} · ${formatDate(log.date)}</p>
+      <div class="field"><label>Peso (kg)</label><input type="text" inputmode="decimal" id="editSetWeight" value="${fmtNum(log.weight)}"></div>
+      <div class="field"><label>Repeticiones</label><input type="text" inputmode="numeric" id="editSetReps" value="${log.reps}"></div>
+      <button class="btn-danger" onclick="App.deleteEditedSet()">${icon('trash')} Borrar esta serie</button>
+      <div class="modal-close-row">
+        <button class="btn-secondary" style="width:auto;padding:9px 20px" onclick="App.closeModal()">Cancelar</button>
+        <button class="btn-primary" style="width:auto;padding:9px 20px" onclick="App.saveEditedSet()">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Reordena las series de un ejercicio en un día para que queden 1..N sin huecos, tras borrar una del medio. */
+function renumberSets(date, dayId, exId) {
+  const logs = state.logs.filter(l => l.date === date && l.dayId === dayId && l.exerciseId === exId).sort((a, b) => a.setNumber - b.setNumber || a.ts - b.ts);
+  logs.forEach((l, i) => { l.setNumber = i + 1; });
+  return logs.length;
+}
+
+/** El contador de series de hoy (cacheado en todaySets) se recalcula tras borrar una serie del día. */
+function syncTodaySetsAfterEdit(dayId, exId, count) {
+  const prog = todaySets[exId];
+  if (!prog) return;
+  const ex = findExercise(state, getActiveRoutine(state)?.id, dayId, exId);
+  prog.setsLogged = count;
+  if (ex) prog.reps = repsForSetIndex(ex, count);
+}
+
+function saveEditedSet() {
+  const log = state.logs.find(l => l.id === editingLog);
+  if (!log) { closeModal(); return; }
+  const weight = parseDecimal(document.getElementById('editSetWeight').value) ?? 0;
+  const reps = parseInt(document.getElementById('editSetReps').value, 10);
+  if (!Number.isFinite(reps) || reps <= 0) { alert('Las repeticiones tienen que ser un número mayor a 0.'); return; }
+  log.weight = Math.max(0, weight);
+  log.reps = reps;
+  editingLog = null; modalView = null;
+  persist(); render();
+}
+
+function deleteEditedSet() {
+  const log = state.logs.find(l => l.id === editingLog);
+  if (!log) { closeModal(); return; }
+  if (!confirm(`¿Borrar la serie ${log.setNumber} de "${log.exerciseName}" (${formatDate(log.date)})?`)) return;
+  const { date, dayId, exerciseId } = log;
+  state.logs = state.logs.filter(l => l.id !== log.id);
+  const count = renumberSets(date, dayId, exerciseId);
+  if (date === todayISO()) syncTodaySetsAfterEdit(dayId, exerciseId, count);
+  editingLog = null; modalView = null;
+  persist(); render();
 }
 
 function selectDay(id) { state.selectedDayId = id; todaySets = {}; focusedExId = null; persist(); render(); }
@@ -848,7 +949,7 @@ function renderProgreso(main) {
         <span class="d">${formatDate(sess.date)}${sess.deload ? ' <span class="tag">Descarga</span>' : ''}</span>
         <span class="hist-w">${sess.top === summary.record ? icon('trophy') : ''}${setLabel(sess.top)}</span>
       </div>
-      <div class="hs-sets">${sess.sets.map(l => setLabel(l)).join(' · ')}</div>
+      <div class="hs-sets">${sess.sets.map(l => `<button class="set-chip" onclick="App.editSetOpen('${l.id}')">${setLabel(l)}</button>`).join('')}</div>
     </div>`).join('')}</div>`;
 
   main.innerHTML = html;
@@ -870,7 +971,9 @@ function renderModal() {
   const alreadyOpen = !!host.querySelector(`.modal-overlay[data-view="${modalView}"]`);
   if (modalView === 'categories') host.innerHTML = categoriesModalHtml();
   else if (modalView === 'settings') host.innerHTML = settingsModalHtml();
+  else if (modalView === 'editSet') host.innerHTML = editSetModalHtml();
   else { host.innerHTML = ''; return; }
+  if (!host.innerHTML) return;
   const overlay = host.querySelector('.modal-overlay');
   overlay.dataset.view = modalView;
   if (alreadyOpen) overlay.classList.add('static');
@@ -889,6 +992,9 @@ function settingsModalHtml() {
         <input type="number" step="0.5" value="${s.incrementUpper}" oninput="App.updateSetting('incrementUpper', this.value)"></div>
       <div class="field"><label>Incremento tren inferior (kg)</label>
         <input type="number" step="0.5" value="${s.incrementLower}" oninput="App.updateSetting('incrementLower', this.value)"></div>
+      <div class="field toggle"><label for="wakeLockToggle">Mantener la pantalla encendida en "Hoy"</label>
+        <input type="checkbox" id="wakeLockToggle" ${s.keepScreenOn ? 'checked' : ''} onchange="App.toggleWakeLockSetting(this.checked)"></div>
+      ${!('wakeLock' in navigator) ? '<p class="hint" style="margin-top:-8px">Tu navegador no soporta esto acá; no molesta, simplemente no hace nada.</p>' : ''}
       <h2 style="font-size:15px;margin-top:18px">Respaldo de datos</h2>
       <p class="hint">Tus datos se guardan solo en este dispositivo. Descargá una copia de respaldo de vez en cuando.</p>
       <div class="btn-row">
@@ -982,7 +1088,13 @@ function confirmDeleteCat(i) {
 
 function updateSetting(key, value) { state.settings[key] = parseFloat(value) || DEFAULT_SETTINGS[key]; persist(); render(); }
 function updateDeload(pct, el) { state.settings.deloadFactor = 1 - (parseFloat(pct) / 100); persist(); render(); }
-function doExport() { exportBackup(state); }
+function doExport() { exportBackup(state); state.lastBackupAt = todayISO(); state.backupSnoozeUntil = null; persist(); render(); }
+function snoozeBackup() {
+  const d = new Date(); d.setDate(d.getDate() + 7);
+  state.backupSnoozeUntil = d.toISOString().slice(0, 10);
+  persist(); render();
+}
+function toggleWakeLockSetting(checked) { state.settings.keepScreenOn = checked; persist(); syncWakeLock(); }
 function doImport(input) {
   const file = input.files[0];
   if (!file) return;
@@ -1037,6 +1149,12 @@ async function runInstallDiagnostics() {
     if (swRegistrationError) lines.push(`  error al registrar: ${swRegistrationError}`);
   }
 
+  if (navigator.storage?.persisted) {
+    lines.push(`Almacenamiento persistente: ${await navigator.storage.persisted() ? 'sí' : 'no'}`);
+  } else {
+    lines.push('Almacenamiento persistente: no soportado por este navegador');
+  }
+  lines.push(`Pantalla encendida (Wake Lock): ${'wakeLock' in navigator ? 'soportado' : 'no soportado en este navegador'}`);
   lines.push(`Ya instalada (modo app): ${window.matchMedia('(display-mode: standalone)').matches ? 'sí' : 'no'}`);
   lines.push(`El navegador ofreció instalar: ${installPromptFired ? 'sí' : 'no'}`);
   lines.push(`Navegador: ${navigator.userAgent}`);
@@ -1057,6 +1175,7 @@ window.App = {
   openCategories, renameCat, addCat, askDeleteCat, cancelDeleteCat, confirmDeleteCat,
   bodySetDate, bodySetValue, setBodyMetric, bodyCancelEdit, saveMeasurements, editMeasurement, deleteMeasurement, editHeight,
   exportWorkouts: () => exportWorkoutsCsv(state), exportMeasures: () => exportMeasurementsCsv(state),
+  editSetOpen, saveEditedSet, deleteEditedSet, snoozeBackup, toggleWakeLockSetting,
 };
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -1086,6 +1205,19 @@ installBtn.addEventListener('click', async () => {
   deferredInstallPrompt = null;
 });
 window.addEventListener('appinstalled', () => { installBtn.hidden = true; });
+
+// Le pedimos al navegador que no borre estos datos solo (por poco espacio, por "limpiar todo", etc.).
+// No siempre lo concede, y no hay nada que hacer si lo niega: por eso además existe el respaldo manual.
+navigator.storage?.persist?.().catch(() => {});
+
+// Al volver de segundo plano (se bloqueó el celular, se cambió de app): el timer de descanso puede haber
+// seguido corriendo sin que un setInterval común lo notara, y el wake lock se libera solo al ocultar la pestaña.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    resyncRest(renderRestBar);
+    syncWakeLock();
+  }
+});
 
 if (!state.selectedDayId) { const r = getActiveRoutine(state); state.selectedDayId = r?.days[0]?.id || null; }
 render();
