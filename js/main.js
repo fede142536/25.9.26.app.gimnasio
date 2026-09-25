@@ -5,7 +5,7 @@ import {
 } from './state.js';
 import { MUSCLE_GROUPS, muscleGroupClass, guessMuscleGroup, slotFor } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, PASTE_PLACEHOLDER } from './parser.js';
-import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue } from './coach.js';
+import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek } from './coach.js';
 import { restTimer, startRest, skipRest, addRestTime } from './timer.js';
 import { icon } from './icons.js';
 import { lineChart, barChart } from './charts.js';
@@ -22,7 +22,7 @@ let modalView = null;     // 'settings' | null
 let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no, el primero sin completar)
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.2';
+const APP_VERSION = '2026-09-25.3';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -526,13 +526,14 @@ function renderEntrenador(main) {
   const segs = Array.from({ length: weeks }, (_, i) => {
     const w = i + 1;
     const cls = [w < info.weekInBlock ? 'past' : '', w === info.weekInBlock ? 'now' : '', w === weeks ? 'deload' : ''].join(' ');
-    return `<div class="week-seg ${cls}"><div class="bar"></div><span>${w === weeks ? 'Descarga' : `Sem ${w}`}</span></div>`;
+    return `<button class="week-seg ${cls}" aria-pressed="${w === info.weekInBlock}" onclick="App.setCurrentWeek(${w})"><div class="bar"></div><span>${w === weeks ? 'Descarga' : `Sem ${w}`}</span></button>`;
   }).join('');
 
   let html = `<div class="card coach-hero" style="margin-top:4px">
       <span class="phase-pill ${info.phase}">${icon(info.phase === 'descarga' ? 'flag' : 'bolt')} ${info.phase === 'descarga' ? 'Semana de descarga' : 'Semana de carga'}</span>
       <div class="week-track">${segs}</div>
-      <p class="hint" style="margin-bottom:0">Bloque ${info.blockNumber} · semana ${info.weekNumber} de esta rutina.
+      <p class="hint" style="margin-top:0">¿No coincide con tu entrenamiento? Tocá la semana en la que estás.</p>
+      <p class="hint" style="margin-bottom:0">Bloque ${info.blockNumber} · semana ${info.weekInBlock} de ${weeks}.
         ${info.phase === 'carga' ? `Próxima descarga: <b>${formatDate(deload)}</b>.` : 'Bajá la intensidad y priorizá recuperar.'}</p>
       <div class="fatigue-meter"><span class="fatigue-dot ${overall.level.replace(' ', '')}"></span><span>${escapeHtml(overall.label)}</span></div>
     </div>`;
@@ -556,6 +557,30 @@ function renderEntrenador(main) {
   }
   html += `<p class="hint" style="text-align:center">Sugerencias automáticas según tu historial. No reemplazan a un profesional: ajustalas si algo no te cierra.</p>`;
   main.innerHTML = html;
+}
+
+/**
+ * El usuario indica en qué semana del bloque está hoy (por ejemplo, porque
+ * su entrenador ya le marcó descarga). Se mueve el inicio del ciclo, no la
+ * fecha de inicio de la rutina, y se vuelven a marcar las series de hoy
+ * con la fase correcta para que el entrenador no las tome como carga.
+ */
+function setCurrentWeek(weekInBlock) {
+  const routine = getActiveRoutine(state);
+  if (!routine) return;
+  const label = weekInBlock === state.settings.mesocycleWeeks ? 'semana de descarga' : `semana ${weekInBlock} de carga`;
+  if (!confirm(`¿Esta semana es tu ${label}? Las próximas semanas se van a calcular a partir de hoy.`)) return;
+  const today = todayISO();
+  routine.cycleStartDate = cycleStartForWeek(today, weekInBlock);
+  const info = weekInfo(routine, today, state.settings);
+  for (const l of state.logs) {
+    if (l.routineId === routine.id && l.date === today) {
+      l.weekNumber = info.weekNumber; l.weekInBlock = info.weekInBlock; l.phase = info.phase;
+    }
+  }
+  todaySets = {}; // las sugerencias de peso cambian con la fase
+  persist();
+  render();
 }
 
 /* ================================================================ Vista: Progreso ================================================================ */
@@ -754,7 +779,7 @@ window.App = {
   wizardRenameDay, wizardAddExercise, wizardRemoveEx, wizardUpdateEx, saveWizard,
   setProgressMode, setProgressGroup, setProgressExercise,
   openSettingsModal, closeModal, updateSetting, updateDeload, doExport, doImport,
-  runInstallDiagnostics,
+  runInstallDiagnostics, setCurrentWeek,
 };
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });

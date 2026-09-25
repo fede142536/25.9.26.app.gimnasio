@@ -423,7 +423,8 @@ label.field-label { font-size: 12px; font-weight: 700; color: var(--text-muted);
 /* ============================================================ Entrenador ============================================================ */
 .coach-hero .phase-pill { margin-bottom: 12px; }
 .week-track { display: flex; gap: 5px; margin: 4px 0 8px; }
-.week-seg { flex: 1; text-align: center; }
+.week-seg { flex: 1; text-align: center; border: none; background: transparent; padding: 6px 0 4px; border-radius: 8px; font-family: var(--font-body); color: inherit; }
+.week-seg:active { background: var(--surface-2); }
 .week-seg .bar { height: 8px; border-radius: 999px; background: var(--surface-3); }
 .week-seg.past .bar { background: var(--text-faint); }
 .week-seg.now .bar { background: var(--accent); }

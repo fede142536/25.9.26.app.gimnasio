@@ -14,7 +14,17 @@
  *    en las últimas sesiones, se marca fatiga alta y se sugiere sostener
  *    o bajar levemente en vez de forzar la progresión.
  * 3. En la semana de descarga se sugiere un peso reducido (deloadFactor)
- *    para todos los ejercicios, independientemente del punto 2.
+ *    sobre el último peso de una semana de carga, independientemente del
+ *    punto 2.
+ * 4. Las sesiones hechas en semanas de descarga no cuentan como base para
+ *    progresar ni para medir fatiga (son livianas a propósito). Si solo
+ *    hay sesiones de descarga (por ejemplo, empezaste a usar la app en
+ *    una semana de descarga), el peso habitual se estima deshaciendo la
+ *    reducción de la descarga.
+ *
+ * El usuario puede indicar en qué semana del bloque está: eso mueve
+ * `routine.cycleStartDate` (el inicio del bloque actual), sin tocar la
+ * fecha de inicio de la rutina.
  */
 
 import { daysBetween, normalizeName } from './state.js';
@@ -23,12 +33,19 @@ import { isLowerBody } from './muscleGroups.js';
 /** Semana/bloque/fase del programa para una fecha dada. */
 export function weekInfo(routine, dateISO, settings) {
   if (!routine) return null;
-  const diff = daysBetween(routine.startDate, dateISO);
+  const diff = daysBetween(routine.cycleStartDate || routine.startDate, dateISO);
   const weekNumber = Math.max(1, Math.floor(Math.max(diff, 0) / 7) + 1);
   const weekInBlock = ((weekNumber - 1) % settings.mesocycleWeeks) + 1;
   const blockNumber = Math.floor((weekNumber - 1) / settings.mesocycleWeeks) + 1;
   const phase = weekInBlock === settings.mesocycleWeeks ? 'descarga' : 'carga';
   return { weekNumber, weekInBlock, blockNumber, phase };
+}
+
+/** Fecha de inicio del ciclo para que `dateISO` caiga en la semana `weekInBlock` del bloque. */
+export function cycleStartForWeek(dateISO, weekInBlock) {
+  const d = new Date(dateISO + 'T00:00:00');
+  d.setDate(d.getDate() - (weekInBlock - 1) * 7);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Próxima fecha (ISO) en la que empieza la siguiente semana de descarga. */
@@ -51,7 +68,11 @@ function sessionsFor(logs, exerciseKey) {
   }
   return Array.from(byDate.entries())
     .sort((a, b) => b[0].localeCompare(a[0])) // más reciente primero
-    .map(([date, sets]) => ({ date, sets: sets.sort((a, b) => a.setNumber - b.setNumber) }));
+    .map(([date, sets]) => ({
+      date,
+      sets: sets.sort((a, b) => a.setNumber - b.setNumber),
+      deload: sets.some(l => l.phase === 'descarga'),
+    }));
 }
 
 /** ¿Qué fracción de las series de una sesión llegó a la meta de reps? */
@@ -69,29 +90,55 @@ function repsMetRatio(session, plannedReps) {
 export function suggestForExercise({ exerciseName, muscleGroup, plannedReps }, logs, settings, phase) {
   const key = normalizeName(exerciseName);
   const sessions = sessionsFor(logs, key);
+  const loadSessions = sessions.filter(s => !s.deload);
+  const deloadSessions = sessions.filter(s => s.deload);
+  const topWeight = (session) => Math.max(...session.sets.map(s => s.weight));
+  const pct = Math.round((1 - settings.deloadFactor) * 100);
 
-  if (!sessions.length) {
-    return { suggestedWeight: null, suggestedReps: plannedReps, fatigue: 'sin datos', note: 'Registrá tu primera serie para que pueda sugerirte una carga.' };
-  }
-
-  const last = sessions[0];
-  const lastTopWeight = Math.max(...last.sets.map(s => s.weight));
-
-  // fatiga: sesiones (de las últimas 3) que no llegaron a la mitad de las series con la meta de reps
-  const recent = sessions.slice(0, 3);
+  // fatiga: sesiones de carga (de las últimas 3) que no llegaron a la mitad de las series con la meta de reps
+  const recent = loadSessions.slice(0, 3);
   const strugglingSessions = recent.filter(s => repsMetRatio(s, plannedReps) < 0.5).length;
-  const fatigue = strugglingSessions >= 2 ? 'alta' : strugglingSessions === 1 ? 'media' : 'baja';
+  const fatigue = !loadSessions.length ? 'sin datos' : strugglingSessions >= 2 ? 'alta' : strugglingSessions === 1 ? 'media' : 'baja';
 
   if (phase === 'descarga') {
-    const roundedWeight = roundToHalf(lastTopWeight * settings.deloadFactor);
+    if (loadSessions.length) {
+      return {
+        suggestedWeight: roundToHalf(topWeight(loadSessions[0]) * settings.deloadFactor),
+        suggestedReps: plannedReps,
+        fatigue,
+        note: `Semana de descarga: ${pct}% menos que tu último peso de carga, para recuperar antes del próximo bloque.`,
+      };
+    }
+    if (deloadSessions.length) {
+      return {
+        suggestedWeight: topWeight(deloadSessions[0]),
+        suggestedReps: plannedReps,
+        fatigue,
+        note: 'Semana de descarga: repetí el peso liviano que ya usaste esta semana.',
+      };
+    }
     return {
-      suggestedWeight: roundedWeight,
-      suggestedReps: plannedReps,
-      fatigue,
-      note: 'Semana de descarga: bajá la intensidad para recuperar antes del próximo bloque.',
+      suggestedWeight: null, suggestedReps: plannedReps, fatigue,
+      note: `Descarga: usá ~${pct}% menos de tu peso habitual, o lo que te indique tu entrenador.`,
     };
   }
 
+  if (!loadSessions.length) {
+    if (deloadSessions.length && topWeight(deloadSessions[0]) > 0) {
+      // Deshacemos la reducción de la descarga, redondeando hacia abajo a 2,5 kg para no pasarse.
+      const estimate = Math.floor(topWeight(deloadSessions[0]) / settings.deloadFactor / 2.5) * 2.5;
+      return {
+        suggestedWeight: estimate,
+        suggestedReps: plannedReps,
+        fatigue,
+        note: 'Volvés de la descarga: este es tu peso habitual estimado. Ajustalo si no coincide.',
+      };
+    }
+    return { suggestedWeight: null, suggestedReps: plannedReps, fatigue: 'sin datos', note: 'Registrá tu primera serie para que pueda sugerirte una carga.' };
+  }
+
+  const last = loadSessions[0];
+  const lastTopWeight = topWeight(last);
   const ratio = repsMetRatio(last, plannedReps);
 
   if (ratio === 1 && fatigue !== 'alta') {
@@ -101,7 +148,7 @@ export function suggestForExercise({ exerciseName, muscleGroup, plannedReps }, l
         suggestedWeight: roundToHalf(lastTopWeight + increment),
         suggestedReps: plannedReps,
         fatigue,
-        note: `Cerraste todas las series con la meta de reps: subí ${increment} kg.`,
+        note: `Cerraste todas las series con la meta de reps: subí ${String(increment).replace('.', ',')} kg.`,
       };
     }
     return {
