@@ -569,5 +569,24 @@ window.App = {
 document.querySelectorAll('nav.tabbar button').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.view)));
 document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
 
+// PWA: se instala en el dispositivo y funciona sin conexión (el "backend" es el propio localStorage).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => { /* sin sw la app sigue funcionando, solo no queda offline */ }));
+}
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById('installBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.hidden = false;
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  installBtn.hidden = true;
+  await deferredInstallPrompt.prompt();
+  deferredInstallPrompt = null;
+});
+window.addEventListener('appinstalled', () => { installBtn.hidden = true; });
+
 if (!state.selectedDayId) { const r = getActiveRoutine(state); state.selectedDayId = r?.days[0]?.id || null; }
 render();
