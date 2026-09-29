@@ -61,6 +61,13 @@ seguido cansa aunque se llegue a la meta de reps, algo que solo mirar las
 reps no detecta. Y si la última sesión se sintió fácil, sugiere un salto
 de peso mayor al habitual.
 
+Cada ejercicio (mientras no tenga series cargadas) tiene un botón "No
+realizado", para dejar registro de que ese día no se hizo en vez de
+inventar una serie o dejarlo sin marcar. Se puede deshacer, y cuenta como
+resuelto en la barra de progreso del día. En "Hoy" y en "Entrenador" hay,
+además, un cuadro de notas libres y opcionales por día y por semana (por
+ejemplo, "esta semana fui dos días por enfermedad").
+
 Los datos viven solo en este dispositivo: la app pide almacenamiento
 persistente al navegador y recuerda hacer un respaldo si pasa mucho
 tiempo sin descargar uno. En "Hoy" se puede mantener la pantalla

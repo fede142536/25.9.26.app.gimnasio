@@ -210,6 +210,9 @@ select, input, textarea {
 }
 select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.note-card { padding: 14px 16px; }
+.note-textarea { width: 100%; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; resize: vertical; min-height: 44px; }
+
 button { font-family: var(--font-body); cursor: pointer; }
 .btn-primary {
   width: 100%; padding: 14px; border: none; border-radius: 12px; background: var(--accent);
@@ -302,6 +305,19 @@ button.mg-chip { border: 1px solid var(--border); background: var(--surface); pa
   margin: 8px 0 0; line-height: 1.4;
 }
 .ex-notes .icon { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+.skip-tag {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--danger); background: var(--danger-soft); border-radius: 999px; padding: 4px 6px 4px 10px; margin: 8px 0 0;
+}
+.skip-tag .icon { width: 14px; height: 14px; }
+.skip-tag button { border: none; background: transparent; color: inherit; font-weight: 700; font-size: 12px; padding: 2px 6px; text-decoration: underline; }
+.ex-card.skipped { opacity: 0.7; }
+.btn-skip {
+  width: 100%; margin-top: 8px; padding: 10px; border-radius: 11px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-muted); font-weight: 600; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-skip .icon { width: 14px; height: 14px; }
 
 .set-track { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 6px; margin-top: 14px; }
 .set-pill {

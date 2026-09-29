@@ -5,6 +5,7 @@ import {
   renameCategory, deleteCategory, categoryUsage, categoryNameTaken,
   MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
   needsBackupReminder, renameExercise, knownExerciseNames,
+  isSkipped, toggleSkip as toggleSkipState, mondayOf,
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
@@ -29,7 +30,7 @@ let bodyMetric = 'weight';
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-25.9';
+const APP_VERSION = '2026-09-29.1';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -197,20 +198,22 @@ function renderHoy(main) {
       todaySets[ex.id] = { setsLogged: logged.length, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length), pr: null, effort: 'justo' };
     }
     const prog = todaySets[ex.id];
-    return { ex, key, suggestion, logged, prog, done: prog.setsLogged >= ex.sets };
+    const skipped = isSkipped(state, todayISO(), day.id, ex.id);
+    return { ex, key, suggestion, logged, prog, done: prog.setsLogged >= ex.sets, skipped };
   });
 
   const totalSets = day.exercises.reduce((a, ex) => a + ex.sets, 0);
-  const doneSets = rows.reduce((a, r) => a + Math.min(r.prog.setsLogged, r.ex.sets), 0);
+  const doneSets = rows.reduce((a, r) => a + (r.skipped ? r.ex.sets : Math.min(r.prog.setsLogged, r.ex.sets)), 0);
   const pct = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
   const rowsById = new Map(rows.map(r => [r.ex.id, r]));
 
-  // unidades del día: una superserie completa (2+ ejercicios) cuenta como una sola unidad al elegir "el actual"
+  // unidades del día: una superserie completa (2+ ejercicios) cuenta como una sola unidad al elegir "el actual".
+  // un ejercicio marcado "no realizado" cuenta como resuelto: no bloquea ni se ofrece como el actual.
   const units = buildUnits(day.exercises).map(exs => exs.map(ex => rowsById.get(ex.id)));
-  const unitDone = (u) => u.every(r => r.done);
+  const unitDone = (u) => u.every(r => r.done || r.skipped);
   const activeRowOfUnit = (u) => {
-    if (u.length === 1) return u[0].done ? null : u[0];
-    const active = u.filter(r => !r.done);
+    if (u.length === 1) return (u[0].done || u[0].skipped) ? null : u[0];
+    const active = u.filter(r => !r.done && !r.skipped);
     if (!active.length) return null;
     const minLogged = Math.min(...active.map(r => r.prog.setsLogged));
     return active.find(r => r.prog.setsLogged === minLogged) || active[0];
@@ -239,7 +242,10 @@ function renderHoy(main) {
   if (!day.exercises.length) {
     html += emptyState('list', 'Día sin ejercicios', 'Agregalos desde la pestaña Rutinas → Editar.');
   } else if (!current) {
-    html += `<div class="day-done"><h3>¡Día completo!</h3>Registraste las ${totalSets} series. Buen entrenamiento.</div>`;
+    const skippedCount = rows.filter(r => r.skipped).length;
+    html += `<div class="day-done"><h3>¡Día completo!</h3>${skippedCount
+      ? `Registraste tus series y marcaste ${skippedCount} ejercicio${skippedCount > 1 ? 's' : ''} como no realizado${skippedCount > 1 ? 's' : ''}.`
+      : `Registraste las ${totalSets} series. Buen entrenamiento.`}</div>`;
   }
 
   const partnersById = new Map();
@@ -249,15 +255,26 @@ function renderHoy(main) {
   }
 
   rows.forEach((r, i) => { html += exerciseCardHtml(r, i, r === current, day.id, partnersById.get(r.ex.id) || null); });
+
+  if (day.exercises.length) {
+    html += `<div class="card note-card">
+      <div class="stepper-label">Notas del día (opcional)</div>
+      <textarea class="note-textarea" rows="2" placeholder="Ej: hoy entrené con poca energía" oninput="App.setDayNote(this.value)" onblur="App.commitNotes()">${escapeHtml(state.dayNotes[todayISO()] || '')}</textarea>
+    </div>`;
+  }
   main.innerHTML = html;
 }
 
 function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
-  const { ex, key, suggestion, logged, prog, done } = r;
+  const { ex, key, suggestion, logged, prog, done, skipped } = r;
   const last = lastWeightFor(key);
   const state_ = done ? 'done' : isCurrent ? 'current' : '';
   const ssTag = partnersLabel ? `<div class="ss-tag">${icon('link')} Superserie con ${escapeHtml(partnersLabel)}</div>` : '';
   const notesLine = ex.notes ? `<div class="ex-notes">${icon('paste')}${escapeHtml(ex.notes)}</div>` : '';
+  const skipTag = skipped
+    ? `<div class="skip-tag">${icon('close')} No realizado hoy <button onclick="event.stopPropagation(); App.toggleSkip('${ex.id}', '${dayId}')">Deshacer</button></div>` : '';
+  const skipBtn = (!done && !skipped && prog.setsLogged === 0)
+    ? `<button class="btn-skip" onclick="event.stopPropagation(); App.toggleSkip('${ex.id}', '${dayId}')">${icon('close')} No realizado</button>` : '';
 
   const pills = Array.from({ length: ex.sets }, (_, s) => {
     const l = logged[s];
@@ -280,8 +297,8 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
   const prBadge = prog.pr ? `<div class="pr-badge">${icon('trophy')} Nuevo récord: ${formatKg(prog.pr)}</div>` : '';
 
   if (!isCurrent) {
-    const tap = done ? '' : ` onclick="App.focusExercise('${ex.id}')" style="cursor:pointer"`;
-    return `<article class="ex-card ${state_}"${tap}>${head}${ssTag}${notesLine}<div class="set-track">${pills}</div>${prBadge}</article>`;
+    const tap = (done || skipped) ? '' : ` onclick="App.focusExercise('${ex.id}')" style="cursor:pointer"`;
+    return `<article class="ex-card ${state_} ${skipped ? 'skipped' : ''}"${tap}>${head}${ssTag}${notesLine}${skipTag}<div class="set-track">${pills}</div>${prBadge}${skipBtn}</article>`;
   }
 
   const sw = suggestion.suggestedWeight;
@@ -323,6 +340,7 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
       </div>
     </div>
     <button class="btn-primary" onclick="App.logSet('${ex.id}', '${dayId}')">${icon('check')} Registrar serie ${prog.setsLogged + 1} de ${ex.sets}</button>
+    ${skipBtn}
     ${prBadge}
   </article>`;
 }
@@ -435,6 +453,23 @@ function useSuggestion(exId, weight) { todaySets[exId].weight = weight; render()
 function setWeight(exId, value) { todaySets[exId].weight = Math.max(0, parseFloat(String(value).replace(',', '.')) || 0); }
 function setReps(exId, value) { todaySets[exId].reps = Math.max(0, parseInt(value, 10) || 0); }
 function setEffort(exId, key) { todaySets[exId].effort = key; render(); }
+
+/** Marca/desmarca un ejercicio como "no realizado" hoy — para dejar registro sin cargar series inventadas. */
+function toggleSkip(exId, dayId) {
+  const routine = getActiveRoutine(state);
+  const day = routine.days.find(d => d.id === dayId);
+  const ex = day.exercises.find(e => e.id === exId);
+  const nowSkipped = toggleSkipState(state, {
+    date: todayISO(), routineId: routine.id, dayId, exerciseId: exId, exerciseName: ex.name, muscleGroup: ex.muscleGroup,
+  });
+  if (nowSkipped && focusedExId === exId) focusedExId = null;
+  persist();
+  render();
+}
+
+function setDayNote(value) { state.dayNotes[todayISO()] = value; }
+function setWeekNote(value) { state.weekNotes[mondayOf(todayISO())] = value; }
+function commitNotes() { persist(); }
 
 /**
  * Registrar una serie. Si el ejercicio es parte de una superserie (2+
@@ -784,6 +819,10 @@ function renderEntrenador(main) {
       <p class="hint" style="margin-bottom:0">Bloque ${info.blockNumber} · semana ${info.weekInBlock} de ${weeks}.
         ${info.phase === 'carga' ? `Próxima descarga: <b>${formatDate(deload)}</b>.` : 'Bajá la intensidad y priorizá recuperar.'}</p>
       <div class="fatigue-meter"><span class="fatigue-dot ${overall.level.replace(' ', '')}"></span><span>${escapeHtml(overall.label)}</span></div>
+    </div>
+    <div class="card note-card">
+      <div class="stepper-label">Notas de la semana (opcional)</div>
+      <textarea class="note-textarea" rows="2" placeholder="Ej: esta semana fui dos días por enfermedad" oninput="App.setWeekNote(this.value)" onblur="App.commitNotes()">${escapeHtml(state.weekNotes[mondayOf(todayISO())] || '')}</textarea>
     </div>`;
 
   for (const { day, items } of perDay) {
@@ -1326,6 +1365,7 @@ async function runInstallDiagnostics() {
 
 window.App = {
   switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, setEffort, logSet,
+  toggleSkip, setDayNote, setWeekNote, commitNotes,
   skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,

@@ -20,6 +20,9 @@
  *   categories: [{ name, slot }],            // grupos musculares editables (ver muscleGroups.js)
  *   profile: { heightCm },
  *   measurements: [{ id, date, weight, waist, chest, arm, leg }],  // kg y cm; campos vacíos = null
+ *   skips: [{ id, date, routineId, dayId, exerciseId, exerciseName, muscleGroup }], // ejercicios marcados "no realizado"
+ *   dayNotes: { [date]: texto },              // nota libre y opcional por día (ej. "poca energía hoy")
+ *   weekNotes: { [lunesDeLaSemana]: texto },  // nota libre y opcional por semana (ej. "falté 2 días por enfermedad")
  *   lastBackupAt, backupSnoozeUntil          // 'YYYY-MM-DD' o null; para recordar el respaldo
  * }
  */
@@ -42,6 +45,7 @@ function emptyState() {
   return {
     routines: [], activeRoutineId: null, logs: [], settings: { ...DEFAULT_SETTINGS }, selectedDayId: null,
     categories: DEFAULT_CATEGORIES.map(c => ({ ...c })), profile: { heightCm: null }, measurements: [],
+    skips: [], dayNotes: {}, weekNotes: {},
     lastBackupAt: null, backupSnoozeUntil: null,
   };
 }
@@ -53,6 +57,9 @@ function normalizeState(st) {
   for (const c of st.categories) if (c.base === undefined) c.base = DEFAULT_CATEGORIES.find(d => d.name === c.name)?.base || null;
   st.profile = { heightCm: null, ...(st.profile || {}) };
   if (!Array.isArray(st.measurements)) st.measurements = [];
+  if (!Array.isArray(st.skips)) st.skips = [];
+  if (!st.dayNotes || typeof st.dayNotes !== 'object') st.dayNotes = {};
+  if (!st.weekNotes || typeof st.weekNotes !== 'object') st.weekNotes = {};
   if (st.lastBackupAt === undefined) st.lastBackupAt = null;
   if (st.backupSnoozeUntil === undefined) st.backupSnoozeUntil = null;
   setCategories(st.categories);
@@ -221,6 +228,28 @@ export function categoryUsage(st, name) {
 
 export function categoryNameTaken(st, name, except = null) {
   return st.categories.some(c => c.name !== except && norm(c.name) === norm(name));
+}
+
+/* ---------------- Ejercicios "no realizado" y notas de día/semana ---------------- */
+
+export function isSkipped(st, date, dayId, exerciseId) {
+  return st.skips.some(s => s.date === date && s.dayId === dayId && s.exerciseId === exerciseId);
+}
+
+/** Marca/desmarca un ejercicio como "no realizado" ese día. Devuelve true si quedó marcado. */
+export function toggleSkip(st, { date, routineId, dayId, exerciseId, exerciseName, muscleGroup }) {
+  const idx = st.skips.findIndex(s => s.date === date && s.dayId === dayId && s.exerciseId === exerciseId);
+  if (idx >= 0) { st.skips.splice(idx, 1); return false; }
+  st.skips.push({ id: uid(), date, routineId, dayId, exerciseId, exerciseName, muscleGroup });
+  return true;
+}
+
+/** Fecha (lunes, ISO) de la semana a la que pertenece `dateISO` — clave estable para la nota semanal. */
+export function mondayOf(dateISO) {
+  const d = new Date(dateISO + 'T00:00:00');
+  const day = d.getDay(); // 0 domingo .. 6 sábado
+  d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
+  return d.toISOString().slice(0, 10);
 }
 
 /* ---------------- Medidas corporales ---------------- */
