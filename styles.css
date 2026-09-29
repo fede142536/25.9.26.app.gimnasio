@@ -212,6 +212,15 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 
 .note-card { padding: 14px 16px; }
 .note-textarea { width: 100%; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; resize: vertical; min-height: 44px; }
+.week-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.week-nav .icon-btn-round { width: 34px; height: 34px; font-size: 18px; }
+.week-nav .icon-btn-round:disabled { opacity: 0.35; }
+.week-nav-label { flex: 1; text-align: center; font-size: 13.5px; }
+.week-nav-label .tag { margin-left: 6px; }
+.day-notes-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.day-note-row { display: flex; align-items: center; gap: 10px; }
+.dn-date { flex-shrink: 0; width: 42px; font-size: 12px; font-weight: 700; color: var(--text-faint); }
+.dn-input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px; }
 
 button { font-family: var(--font-body); cursor: pointer; }
 .btn-primary {

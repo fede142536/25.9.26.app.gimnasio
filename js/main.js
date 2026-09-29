@@ -27,10 +27,11 @@ let focusedExId = null;   // ejercicio que el usuario eligió hacer ahora (si no
 let catDeleting = null;   // índice de la categoría que se está por borrar (pide a dónde mover sus ejercicios)
 let bodyForm = null;      // formulario de medidas en curso: { date, editingId, values: { weight: '78,4', ... } }
 let bodyMetric = 'weight';
+let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el historial de notas de "Entrenador" (0 = esta semana)
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-29.1';
+const APP_VERSION = '2026-09-29.2';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -259,7 +260,7 @@ function renderHoy(main) {
   if (day.exercises.length) {
     html += `<div class="card note-card">
       <div class="stepper-label">Notas del día (opcional)</div>
-      <textarea class="note-textarea" rows="2" placeholder="Ej: hoy entrené con poca energía" oninput="App.setDayNote(this.value)" onblur="App.commitNotes()">${escapeHtml(state.dayNotes[todayISO()] || '')}</textarea>
+      <textarea class="note-textarea" rows="2" placeholder="Ej: hoy entrené con poca energía" oninput="App.setDayNoteFor('${todayISO()}', this.value)" onblur="App.commitNotes()">${escapeHtml(state.dayNotes[todayISO()] || '')}</textarea>
     </div>`;
   }
   main.innerHTML = html;
@@ -467,9 +468,41 @@ function toggleSkip(exId, dayId) {
   render();
 }
 
-function setDayNote(value) { state.dayNotes[todayISO()] = value; }
-function setWeekNote(value) { state.weekNotes[mondayOf(todayISO())] = value; }
+function setDayNoteFor(date, value) { state.dayNotes[date] = value; }
+function setWeekNoteFor(monday, value) { state.weekNotes[monday] = value; }
 function commitNotes() { persist(); }
+
+function shiftDate(dateISO, days) {
+  const d = new Date(dateISO + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftHistoryWeek(delta) { historyWeekOffset = Math.min(0, historyWeekOffset + delta); render(); }
+
+/** Historial de notas por semana: navegable, con la nota semanal y la de cada día de esa semana, todas editables. */
+function weekHistoryHtml() {
+  const monday = shiftDate(mondayOf(todayISO()), historyWeekOffset * 7);
+  const sunday = shiftDate(monday, 6);
+  const days = Array.from({ length: 7 }, (_, i) => shiftDate(monday, i));
+  const isCurrentWeek = historyWeekOffset === 0;
+  return `<div class="card note-card">
+    <div class="week-nav">
+      <button class="icon-btn-round" aria-label="Semana anterior" onclick="App.shiftHistoryWeek(-1)">‹</button>
+      <div class="week-nav-label"><b>${formatDate(monday).slice(0, 5)} – ${formatDate(sunday).slice(0, 5)}</b>${isCurrentWeek ? '<span class="tag">Esta semana</span>' : ''}</div>
+      <button class="icon-btn-round" aria-label="Semana siguiente" ${isCurrentWeek ? 'disabled' : ''} onclick="App.shiftHistoryWeek(1)">›</button>
+    </div>
+    <div class="stepper-label" style="margin-top:12px">Notas de la semana (opcional)</div>
+    <textarea class="note-textarea" rows="2" placeholder="Ej: esta semana fui dos días por enfermedad" oninput="App.setWeekNoteFor('${monday}', this.value)" onblur="App.commitNotes()">${escapeHtml(state.weekNotes[monday] || '')}</textarea>
+    <div class="stepper-label" style="margin-top:12px">Notas por día</div>
+    <div class="day-notes-list">
+      ${days.map(d => `<div class="day-note-row">
+        <span class="dn-date">${escapeHtml(formatDate(d).slice(0, 5))}</span>
+        <input type="text" class="dn-input" placeholder="Sin nota" value="${escapeHtml(state.dayNotes[d] || '')}" oninput="App.setDayNoteFor('${d}', this.value)" onblur="App.commitNotes()">
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
 
 /**
  * Registrar una serie. Si el ejercicio es parte de una superserie (2+
@@ -820,10 +853,7 @@ function renderEntrenador(main) {
         ${info.phase === 'carga' ? `Próxima descarga: <b>${formatDate(deload)}</b>.` : 'Bajá la intensidad y priorizá recuperar.'}</p>
       <div class="fatigue-meter"><span class="fatigue-dot ${overall.level.replace(' ', '')}"></span><span>${escapeHtml(overall.label)}</span></div>
     </div>
-    <div class="card note-card">
-      <div class="stepper-label">Notas de la semana (opcional)</div>
-      <textarea class="note-textarea" rows="2" placeholder="Ej: esta semana fui dos días por enfermedad" oninput="App.setWeekNote(this.value)" onblur="App.commitNotes()">${escapeHtml(state.weekNotes[mondayOf(todayISO())] || '')}</textarea>
-    </div>`;
+    ${weekHistoryHtml()}`;
 
   for (const { day, items } of perDay) {
     if (!items.length) continue;
@@ -1365,7 +1395,7 @@ async function runInstallDiagnostics() {
 
 window.App = {
   switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, setEffort, logSet,
-  toggleSkip, setDayNote, setWeekNote, commitNotes,
+  toggleSkip, setDayNoteFor, setWeekNoteFor, commitNotes, shiftHistoryWeek,
   skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,

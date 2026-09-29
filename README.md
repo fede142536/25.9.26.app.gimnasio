@@ -64,9 +64,11 @@ de peso mayor al habitual.
 Cada ejercicio (mientras no tenga series cargadas) tiene un botón "No
 realizado", para dejar registro de que ese día no se hizo en vez de
 inventar una serie o dejarlo sin marcar. Se puede deshacer, y cuenta como
-resuelto en la barra de progreso del día. En "Hoy" y en "Entrenador" hay,
-además, un cuadro de notas libres y opcionales por día y por semana (por
-ejemplo, "esta semana fui dos días por enfermedad").
+resuelto en la barra de progreso del día. En "Hoy" hay un cuadro de notas
+libres y opcionales para el día. En "Entrenador" hay un historial de
+notas navegable semana por semana (con flechas ‹ ›): además de la nota
+de esa semana, se ve y se puede editar la nota de cada uno de sus 7 días,
+tanto en la semana actual como en cualquier semana pasada.
 
 Los datos viven solo en este dispositivo: la app pide almacenamiento
 persistente al navegador y recuerda hacer un respaldo si pasa mucho
