@@ -63,9 +63,12 @@ de peso mayor al habitual.
 
 Cada ejercicio (mientras no tenga series cargadas) tiene un botón "No
 realizado", para dejar registro de que ese día no se hizo en vez de
-inventar una serie o dejarlo sin marcar. Se puede deshacer, y cuenta como
-resuelto en la barra de progreso del día. En "Hoy" hay un cuadro de notas
-libres y opcionales para el día. En "Entrenador" hay un historial de
+inventar una serie o dejarlo sin marcar. Y una vez arrancado, cualquier
+serie pendiente que decidas no hacer (por cansancio, tiempo, etc.) se
+puede marcar "Esta serie no se hizo" en vez de forzarla o dejarla
+colgada; ambas se pueden deshacer, y cuentan como resueltas en la barra
+de progreso del día. En "Hoy" hay un cuadro de notas libres y opcionales
+para el día. En "Entrenador" hay un historial de
 notas navegable semana por semana (con flechas ‹ ›): además de la nota
 de esa semana, se ve y se puede editar la nota de cada uno de sus 7 días,
 tanto en la semana actual como en cualquier semana pasada.

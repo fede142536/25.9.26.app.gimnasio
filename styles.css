@@ -342,6 +342,12 @@ button.set-pill.done:active { filter: brightness(0.94); }
 .set-pill.current .set-n, .set-pill.current b { color: var(--accent-strong); }
 .set-pill.done { background: var(--success-soft); }
 .set-pill.done .set-n { color: var(--success); }
+button.set-pill.notdone { cursor: pointer; background: var(--danger-soft); }
+button.set-pill.notdone:active { filter: brightness(0.94); }
+.set-pill.notdone .set-n { color: var(--danger); }
+.set-pill.notdone b { display: flex; justify-content: center; }
+.set-pill.notdone .icon { width: 16px; height: 16px; color: var(--danger); }
+.set-pill.notdone small { color: var(--danger); }
 
 .coach-line {
   display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px;

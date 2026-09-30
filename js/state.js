@@ -21,6 +21,7 @@
  *   profile: { heightCm },
  *   measurements: [{ id, date, weight, waist, chest, arm, leg }],  // kg y cm; campos vacíos = null
  *   skips: [{ id, date, routineId, dayId, exerciseId, exerciseName, muscleGroup }], // ejercicios marcados "no realizado"
+ *   setSkips: [{ id, date, routineId, dayId, exerciseId, exerciseName }], // series puntuales marcadas "no hecha" (una entrada por serie)
  *   dayNotes: { [date]: texto },              // nota libre y opcional por día (ej. "poca energía hoy")
  *   weekNotes: { [lunesDeLaSemana]: texto },  // nota libre y opcional por semana (ej. "falté 2 días por enfermedad")
  *   lastBackupAt, backupSnoozeUntil          // 'YYYY-MM-DD' o null; para recordar el respaldo
@@ -45,7 +46,7 @@ function emptyState() {
   return {
     routines: [], activeRoutineId: null, logs: [], settings: { ...DEFAULT_SETTINGS }, selectedDayId: null,
     categories: DEFAULT_CATEGORIES.map(c => ({ ...c })), profile: { heightCm: null }, measurements: [],
-    skips: [], dayNotes: {}, weekNotes: {},
+    skips: [], setSkips: [], dayNotes: {}, weekNotes: {},
     lastBackupAt: null, backupSnoozeUntil: null,
   };
 }
@@ -58,6 +59,7 @@ function normalizeState(st) {
   st.profile = { heightCm: null, ...(st.profile || {}) };
   if (!Array.isArray(st.measurements)) st.measurements = [];
   if (!Array.isArray(st.skips)) st.skips = [];
+  if (!Array.isArray(st.setSkips)) st.setSkips = [];
   if (!st.dayNotes || typeof st.dayNotes !== 'object') st.dayNotes = {};
   if (!st.weekNotes || typeof st.weekNotes !== 'object') st.weekNotes = {};
   if (st.lastBackupAt === undefined) st.lastBackupAt = null;
@@ -242,6 +244,24 @@ export function toggleSkip(st, { date, routineId, dayId, exerciseId, exerciseNam
   if (idx >= 0) { st.skips.splice(idx, 1); return false; }
   st.skips.push({ id: uid(), date, routineId, dayId, exerciseId, exerciseName, muscleGroup });
   return true;
+}
+
+/** Cuántas series pendientes de un ejercicio se marcaron "no hecha" ese día (se decidió no hacerlas). */
+export function skippedSetCount(st, date, dayId, exerciseId) {
+  return st.setSkips.filter(s => s.date === date && s.dayId === dayId && s.exerciseId === exerciseId).length;
+}
+
+export function addSetSkip(st, { date, routineId, dayId, exerciseId, exerciseName }) {
+  st.setSkips.push({ id: uid(), date, routineId, dayId, exerciseId, exerciseName });
+}
+
+/** Deshace la última serie marcada "no hecha" de ese ejercicio ese día. Devuelve true si había alguna. */
+export function undoSetSkip(st, date, dayId, exerciseId) {
+  for (let i = st.setSkips.length - 1; i >= 0; i--) {
+    const s = st.setSkips[i];
+    if (s.date === date && s.dayId === dayId && s.exerciseId === exerciseId) { st.setSkips.splice(i, 1); return true; }
+  }
+  return false;
 }
 
 /** Fecha (lunes, ISO) de la semana a la que pertenece `dateISO` — clave estable para la nota semanal. */

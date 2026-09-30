@@ -6,6 +6,7 @@ import {
   MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
   needsBackupReminder, renameExercise, knownExerciseNames,
   isSkipped, toggleSkip as toggleSkipState, mondayOf,
+  skippedSetCount, addSetSkip, undoSetSkip,
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
@@ -31,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-29.2';
+const APP_VERSION = '2026-09-30.1';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -161,11 +162,17 @@ function buildUnits(exercises) {
 }
 
 /** El ejercicio de una superserie que sigue: el de menos series hechas (a igualdad, el primero en el orden). */
+/** Series de un ejercicio ya "resueltas" hoy: hechas de verdad o marcadas "no hecha". */
+function resolvedSets(exId) {
+  const p = todaySets[exId];
+  return (p?.setsLogged ?? 0) + (p?.setsSkipped ?? 0);
+}
+
 function nextActiveInGroup(group) {
-  const active = group.filter(e => (todaySets[e.id]?.setsLogged ?? 0) < e.sets);
+  const active = group.filter(e => resolvedSets(e.id) < e.sets);
   if (!active.length) return null;
-  const minLogged = Math.min(...active.map(e => todaySets[e.id].setsLogged));
-  return active.find(e => todaySets[e.id].setsLogged === minLogged) || active[0];
+  const min = Math.min(...active.map(e => resolvedSets(e.id)));
+  return active.find(e => resolvedSets(e.id) === min) || active[0];
 }
 
 /** Series ya registradas hoy para un ejercicio: así el progreso del día sobrevive a cerrar la app. */
@@ -196,28 +203,30 @@ function renderHoy(main) {
       const lastToday = logged[logged.length - 1];
       const defaultWeight = lastToday ? lastToday.weight
         : suggestion.suggestedWeight != null ? suggestion.suggestedWeight : (lastWeightFor(key) ?? 0);
-      todaySets[ex.id] = { setsLogged: logged.length, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length), pr: null, effort: 'justo' };
+      const setsSkipped = skippedSetCount(state, todayISO(), day.id, ex.id);
+      todaySets[ex.id] = { setsLogged: logged.length, setsSkipped, weight: defaultWeight, reps: repsForSetIndex(ex, logged.length + setsSkipped), pr: null, effort: 'justo' };
     }
     const prog = todaySets[ex.id];
     const skipped = isSkipped(state, todayISO(), day.id, ex.id);
-    return { ex, key, suggestion, logged, prog, done: prog.setsLogged >= ex.sets, skipped };
+    return { ex, key, suggestion, logged, prog, done: resolvedSets(ex.id) >= ex.sets, skipped };
   });
 
   const totalSets = day.exercises.reduce((a, ex) => a + ex.sets, 0);
-  const doneSets = rows.reduce((a, r) => a + (r.skipped ? r.ex.sets : Math.min(r.prog.setsLogged, r.ex.sets)), 0);
+  const doneSets = rows.reduce((a, r) => a + (r.skipped ? r.ex.sets : Math.min(resolvedSets(r.ex.id), r.ex.sets)), 0);
   const pct = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
   const rowsById = new Map(rows.map(r => [r.ex.id, r]));
 
   // unidades del día: una superserie completa (2+ ejercicios) cuenta como una sola unidad al elegir "el actual".
-  // un ejercicio marcado "no realizado" cuenta como resuelto: no bloquea ni se ofrece como el actual.
+  // un ejercicio marcado "no realizado" (entero) o con sus series pendientes marcadas "no hecha" cuenta como
+  // resuelto: no bloquea ni se ofrece como el actual.
   const units = buildUnits(day.exercises).map(exs => exs.map(ex => rowsById.get(ex.id)));
   const unitDone = (u) => u.every(r => r.done || r.skipped);
   const activeRowOfUnit = (u) => {
     if (u.length === 1) return (u[0].done || u[0].skipped) ? null : u[0];
     const active = u.filter(r => !r.done && !r.skipped);
     if (!active.length) return null;
-    const minLogged = Math.min(...active.map(r => r.prog.setsLogged));
-    return active.find(r => r.prog.setsLogged === minLogged) || active[0];
+    const min = Math.min(...active.map(r => resolvedSets(r.ex.id)));
+    return active.find(r => resolvedSets(r.ex.id) === min) || active[0];
   };
   const focusedUnit = focusedExId ? units.find(u => u.some(r => r.ex.id === focusedExId) && !unitDone(u)) : null;
   const currentUnit = focusedUnit || units.find(u => !unitDone(u)) || null;
@@ -244,8 +253,12 @@ function renderHoy(main) {
     html += emptyState('list', 'Día sin ejercicios', 'Agregalos desde la pestaña Rutinas → Editar.');
   } else if (!current) {
     const skippedCount = rows.filter(r => r.skipped).length;
-    html += `<div class="day-done"><h3>¡Día completo!</h3>${skippedCount
-      ? `Registraste tus series y marcaste ${skippedCount} ejercicio${skippedCount > 1 ? 's' : ''} como no realizado${skippedCount > 1 ? 's' : ''}.`
+    const setsSkippedCount = rows.reduce((a, r) => a + (r.skipped ? 0 : (r.prog.setsSkipped || 0)), 0);
+    const notes = [];
+    if (skippedCount) notes.push(`marcaste ${skippedCount} ejercicio${skippedCount > 1 ? 's' : ''} como no realizado${skippedCount > 1 ? 's' : ''}`);
+    if (setsSkippedCount) notes.push(`${setsSkippedCount} serie${setsSkippedCount > 1 ? 's' : ''} como no hecha${setsSkippedCount > 1 ? 's' : ''}`);
+    html += `<div class="day-done"><h3>¡Día completo!</h3>${notes.length
+      ? `Registraste tus series y ${notes.join(', y ')}.`
       : `Registraste las ${totalSets} series. Buen entrenamiento.`}</div>`;
   }
 
@@ -274,13 +287,19 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
   const notesLine = ex.notes ? `<div class="ex-notes">${icon('paste')}${escapeHtml(ex.notes)}</div>` : '';
   const skipTag = skipped
     ? `<div class="skip-tag">${icon('close')} No realizado hoy <button onclick="event.stopPropagation(); App.toggleSkip('${ex.id}', '${dayId}')">Deshacer</button></div>` : '';
-  const skipBtn = (!done && !skipped && prog.setsLogged === 0)
+  const resolvedCount = resolvedSets(ex.id);
+  const skipBtn = (!done && !skipped && resolvedCount === 0)
     ? `<button class="btn-skip" onclick="event.stopPropagation(); App.toggleSkip('${ex.id}', '${dayId}')">${icon('close')} No realizado</button>` : '';
+  const skipSetBtn = (!done && !skipped && resolvedCount > 0)
+    ? `<button class="btn-skip" onclick="event.stopPropagation(); App.skipCurrentSet('${ex.id}', '${dayId}')">${icon('close')} Esta serie no se hizo</button>` : '';
 
   const pills = Array.from({ length: ex.sets }, (_, s) => {
     const l = logged[s];
     if (l) return `<button class="set-pill done" onclick="event.stopPropagation(); App.editSetOpen('${l.id}')"><span class="set-n">S${s + 1}</span><b>${l.weight > 0 ? fmtNum(l.weight) : '—'}</b><small>${l.weight > 0 ? 'kg ' : ''}× ${l.reps}</small></button>`;
-    const cls = isCurrent && s === prog.setsLogged ? 'current' : '';
+    if (s < resolvedCount) {
+      return `<button class="set-pill notdone" onclick="event.stopPropagation(); App.undoSkipSet('${ex.id}', '${dayId}')" aria-label="Deshacer: esta serie no estaba marcada como no hecha"><span class="set-n">S${s + 1}</span><b>${icon('close')}</b><small>No hecha</small></button>`;
+    }
+    const cls = isCurrent && s === resolvedCount ? 'current' : '';
     return `<span class="set-pill ${cls}"><span class="set-n">S${s + 1}</span><b>${repsForSetIndex(ex, s)}</b><small>reps</small></span>`;
   }).join('');
 
@@ -299,7 +318,7 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
 
   if (!isCurrent) {
     const tap = (done || skipped) ? '' : ` onclick="App.focusExercise('${ex.id}')" style="cursor:pointer"`;
-    return `<article class="ex-card ${state_} ${skipped ? 'skipped' : ''}"${tap}>${head}${ssTag}${notesLine}${skipTag}<div class="set-track">${pills}</div>${prBadge}${skipBtn}</article>`;
+    return `<article class="ex-card ${state_} ${skipped ? 'skipped' : ''}"${tap}>${head}${ssTag}${notesLine}${skipTag}<div class="set-track">${pills}</div>${prBadge}${skipBtn}${skipSetBtn}</article>`;
   }
 
   const sw = suggestion.suggestedWeight;
@@ -342,6 +361,7 @@ function exerciseCardHtml(r, index, isCurrent, dayId, partnersLabel) {
     </div>
     <button class="btn-primary" onclick="App.logSet('${ex.id}', '${dayId}')">${icon('check')} Registrar serie ${prog.setsLogged + 1} de ${ex.sets}</button>
     ${skipBtn}
+    ${skipSetBtn}
     ${prBadge}
   </article>`;
 }
@@ -412,7 +432,7 @@ function syncTodaySetsAfterEdit(dayId, exId, count) {
   if (!prog) return;
   const ex = findExercise(state, getActiveRoutine(state)?.id, dayId, exId);
   prog.setsLogged = count;
-  if (ex) prog.reps = repsForSetIndex(ex, count);
+  if (ex) prog.reps = repsForSetIndex(ex, count + (prog.setsSkipped || 0));
 }
 
 function setEditSetEffort(key, btn) {
@@ -522,8 +542,8 @@ function logSet(exId, dayId) {
 
   const group = ex.supersetGroup ? day.exercises.filter(e => e.supersetGroup === ex.supersetGroup) : [];
   const isGroup = group.length > 1;
-  // ¿exId es el último que le faltaba hacer su serie en esta ronda? (antes de registrar esta)
-  const activeBefore = isGroup ? group.filter(e => (todaySets[e.id]?.setsLogged ?? 0) < e.sets) : [];
+  // ¿exId es el último que le faltaba resolver su serie en esta ronda? (antes de registrar esta)
+  const activeBefore = isGroup ? group.filter(e => resolvedSets(e.id) < e.sets) : [];
   const closesRound = !isGroup || (activeBefore.length && activeBefore[activeBefore.length - 1].id === exId);
 
   state.logs.push({
@@ -534,7 +554,7 @@ function logSet(exId, dayId) {
   });
   prog.setsLogged++;
   if (prog.weight > 0 && prog.weight > wasMax) prog.pr = prog.weight;
-  if (prog.setsLogged < ex.sets) prog.reps = repsForSetIndex(ex, prog.setsLogged); // la próxima serie muestra su propia meta de reps (esquema piramidal)
+  if (resolvedSets(exId) < ex.sets) prog.reps = repsForSetIndex(ex, resolvedSets(exId)); // la próxima serie muestra su propia meta de reps (esquema piramidal)
   persist();
 
   let advancedUnit = false;
@@ -542,7 +562,7 @@ function logSet(exId, dayId) {
     if (closesRound) {
       // se completó la ronda: ahora sí, a descansar. Si la superserie no terminó, seguimos enfocados en
       // ella (para su próxima ronda) aunque haya una unidad anterior sin terminar (la saltamos a propósito).
-      advancedUnit = group.every(e => todaySets[e.id].setsLogged >= e.sets);
+      advancedUnit = group.every(e => resolvedSets(e.id) >= e.sets);
       focusedExId = advancedUnit ? null : ex.id;
       startRest(ex.restSeconds, ex.name, renderRestBar);
     } else {
@@ -551,12 +571,66 @@ function logSet(exId, dayId) {
       skipRest(renderRestBar);
     }
   } else {
-    const finished = prog.setsLogged >= ex.sets;
+    const finished = resolvedSets(exId) >= ex.sets;
     if (finished) { focusedExId = null; skipRest(renderRestBar); advancedUnit = true; }
     else startRest(ex.restSeconds, ex.name, renderRestBar);
   }
   render();
   if (advancedUnit) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/**
+ * Marca la serie pendiente actual de un ejercicio como "no hecha" — se decidió no hacerla (cansancio,
+ * tiempo, etc.) — sin inventar un peso/reps. Sigue la misma lógica de ronda que registrar una serie, pero
+ * nunca hay descanso: no se hizo ningún esfuerzo.
+ */
+function skipCurrentSet(exId, dayId) {
+  const routine = getActiveRoutine(state);
+  const day = routine.days.find(d => d.id === dayId);
+  const ex = day.exercises.find(e => e.id === exId);
+  const prog = todaySets[exId];
+
+  const group = ex.supersetGroup ? day.exercises.filter(e => e.supersetGroup === ex.supersetGroup) : [];
+  const isGroup = group.length > 1;
+  const activeBefore = isGroup ? group.filter(e => resolvedSets(e.id) < e.sets) : [];
+  const closesRound = !isGroup || (activeBefore.length && activeBefore[activeBefore.length - 1].id === exId);
+
+  addSetSkip(state, { date: todayISO(), routineId: routine.id, dayId, exerciseId: exId, exerciseName: ex.name });
+  prog.setsSkipped = (prog.setsSkipped || 0) + 1;
+  if (resolvedSets(exId) < ex.sets) prog.reps = repsForSetIndex(ex, resolvedSets(exId));
+  persist();
+
+  let advancedUnit = false;
+  if (isGroup) {
+    if (closesRound) {
+      advancedUnit = group.every(e => resolvedSets(e.id) >= e.sets);
+      focusedExId = advancedUnit ? null : ex.id;
+    } else {
+      focusedExId = nextActiveInGroup(group)?.id ?? null;
+    }
+  } else if (resolvedSets(exId) >= ex.sets) {
+    focusedExId = null;
+    advancedUnit = true;
+  }
+  skipRest(renderRestBar); // no se hizo la serie: no corresponde descansar
+  render();
+  if (advancedUnit) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/** Deshace la última serie marcada "no hecha" de un ejercicio hoy (vuelve a quedar pendiente). */
+function undoSkipSet(exId, dayId) {
+  const undone = undoSetSkip(state, todayISO(), dayId, exId);
+  if (!undone) return;
+  const prog = todaySets[exId];
+  if (prog) {
+    prog.setsSkipped = Math.max(0, (prog.setsSkipped || 0) - 1);
+    const routine = getActiveRoutine(state);
+    const day = routine.days.find(d => d.id === dayId);
+    const ex = day.exercises.find(e => e.id === exId);
+    prog.reps = repsForSetIndex(ex, resolvedSets(exId));
+  }
+  persist();
+  render();
 }
 
 /* ================================================================ Vista: Rutinas ================================================================ */
@@ -1395,7 +1469,7 @@ async function runInstallDiagnostics() {
 
 window.App = {
   switchTab, selectDay, focusExercise, adjustWeight, adjustReps, useSuggestion, setWeight, setReps, setEffort, logSet,
-  toggleSkip, setDayNoteFor, setWeekNoteFor, commitNotes, shiftHistoryWeek,
+  toggleSkip, skipCurrentSet, undoSkipSet, setDayNoteFor, setWeekNoteFor, commitNotes, shiftHistoryWeek,
   skipRest: () => skipRest(renderRestBar), addRest: (s) => addRestTime(s, renderRestBar),
   startNewRoutine, cancelWizard, activateRoutine, deleteRoutine, editRoutine, chooseMethod,
   handleDocxFile, handlePasteText, wizardSetName, wizardSetDate, wizardAddDay, wizardRemoveDay,
