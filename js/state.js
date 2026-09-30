@@ -269,7 +269,7 @@ export function mondayOf(dateISO) {
   const d = new Date(dateISO + 'T00:00:00');
   const day = d.getDay(); // 0 domingo .. 6 sábado
   d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
-  return d.toISOString().slice(0, 10);
+  return toLocalISO(d);
 }
 
 /* ---------------- Medidas corporales ---------------- */
@@ -336,7 +336,18 @@ export function saveState(state) {
 
 export function uid() { return Math.random().toString(36).slice(2, 9); }
 
-export function todayISO() { return new Date().toISOString().slice(0, 10); }
+/**
+ * Formatea un Date como 'YYYY-MM-DD' con sus componentes LOCALES. Nunca usar
+ * `.toISOString()` para esto: convierte a UTC, y para cualquiera con huso
+ * horario negativo (América) eso adelanta la fecha durante la noche (ej.
+ * 22:00 del lunes en Argentina ya es la 01:00 UTC del martes) — el
+ * entrenamiento de esa noche quedaba guardado con la fecha de "mañana".
+ */
+export function toLocalISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function todayISO() { return toLocalISO(new Date()); }
 
 export function daysBetween(isoA, isoB) {
   const a = new Date(isoA + 'T00:00:00');

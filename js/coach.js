@@ -32,7 +32,7 @@
  * fecha de inicio de la rutina.
  */
 
-import { daysBetween, normalizeName } from './state.js';
+import { daysBetween, normalizeName, toLocalISO } from './state.js';
 import { isLowerBody } from './muscleGroups.js';
 
 export const EFFORT_LEVELS = [
@@ -56,7 +56,7 @@ export function weekInfo(routine, dateISO, settings) {
 export function cycleStartForWeek(dateISO, weekInBlock) {
   const d = new Date(dateISO + 'T00:00:00');
   d.setDate(d.getDate() - (weekInBlock - 1) * 7);
-  return d.toISOString().slice(0, 10);
+  return toLocalISO(d);
 }
 
 /** Próxima fecha (ISO) en la que empieza la siguiente semana de descarga. */
@@ -66,7 +66,7 @@ export function nextDeloadDate(routine, settings, fromISO) {
   const weeksUntilDeload = settings.mesocycleWeeks - info.weekInBlock;
   const d = new Date(fromISO + 'T00:00:00');
   d.setDate(d.getDate() + weeksUntilDeload * 7);
-  return d.toISOString().slice(0, 10);
+  return toLocalISO(d);
 }
 
 /** Agrupa los logs de un ejercicio (por exerciseKey) en sesiones (una por fecha). */

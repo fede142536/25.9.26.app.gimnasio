@@ -6,7 +6,7 @@ import {
   MEASURE_FIELDS, upsertMeasurement, exportMeasurementsCsv, exportWorkoutsCsv,
   needsBackupReminder, renameExercise, knownExerciseNames,
   isSkipped, toggleSkip as toggleSkipState, mondayOf,
-  skippedSetCount, addSetSkip, undoSetSkip,
+  skippedSetCount, addSetSkip, undoSetSkip, toLocalISO,
 } from './state.js';
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-30.1';
+const APP_VERSION = '2026-09-30.2';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -495,7 +495,7 @@ function commitNotes() { persist(); }
 function shiftDate(dateISO, days) {
   const d = new Date(dateISO + 'T00:00:00');
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return toLocalISO(d);
 }
 
 function shiftHistoryWeek(delta) { historyWeekOffset = Math.min(0, historyWeekOffset + delta); render(); }
@@ -1395,7 +1395,7 @@ function updateDeload(pct, el) { state.settings.deloadFactor = 1 - (parseFloat(p
 function doExport() { exportBackup(state); state.lastBackupAt = todayISO(); state.backupSnoozeUntil = null; persist(); render(); }
 function snoozeBackup() {
   const d = new Date(); d.setDate(d.getDate() + 7);
-  state.backupSnoozeUntil = d.toISOString().slice(0, 10);
+  state.backupSnoozeUntil = toLocalISO(d);
   persist(); render();
 }
 function toggleWakeLockSetting(checked) { state.settings.keepScreenOn = checked; persist(); syncWakeLock(); }
