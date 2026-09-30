@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-30.2';
+const APP_VERSION = '2026-09-30.3';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -400,7 +400,9 @@ function editSetModalHtml() {
   return `<div class="modal-overlay" onclick="if(event.target===this) App.closeModal()">
     <div class="modal-box">
       <h2>Editar serie</h2>
-      <p class="hint" style="margin-top:-10px">${escapeHtml(log.exerciseName)} · serie ${log.setNumber} · ${formatDate(log.date)}</p>
+      <p class="hint" style="margin-top:-10px">${escapeHtml(log.exerciseName)} · serie ${log.setNumber}</p>
+      <div class="field"><label>Fecha</label><input type="date" id="editSetDate" value="${log.date}" max="${todayISO()}"></div>
+      <p class="hint" style="margin-top:-8px">Si la cargaste de noche y quedó con la fecha del día siguiente, corregila acá.</p>
       <div class="field"><label>Peso (kg)</label><input type="text" inputmode="decimal" id="editSetWeight" value="${fmtNum(log.weight)}"></div>
       <div class="field"><label>Repeticiones</label><input type="text" inputmode="numeric" id="editSetReps" value="${log.reps}"></div>
       <div class="field">
@@ -440,12 +442,38 @@ function setEditSetEffort(key, btn) {
   btn.parentElement.querySelectorAll('.effort-chip').forEach(b => b.classList.toggle('active', b === btn));
 }
 
+/**
+ * Mueve una serie ya registrada a otra fecha (corrige el caso típico del bug de huso horario: una serie
+ * cargada de noche que quedó fechada "mañana"). Renumera las series de ambas fechas para esa combinación
+ * de día/ejercicio, y recalcula semana/bloque/fase con la fecha nueva.
+ */
+function moveLogToDate(log, newDate) {
+  const oldDate = log.date;
+  if (newDate === oldDate) return;
+  log.date = newDate;
+  log.setNumber = 9999; // para que quede al final al renumerar su nueva fecha (caso típico: no hay más series ese día)
+  renumberSets(oldDate, log.dayId, log.exerciseId);
+  renumberSets(newDate, log.dayId, log.exerciseId);
+  const routine = getRoutine(state, log.routineId);
+  if (routine) {
+    const info = weekInfo(routine, newDate, state.settings);
+    if (info) { log.weekNumber = info.weekNumber; log.weekInBlock = info.weekInBlock; log.phase = info.phase; }
+  }
+  if (oldDate === todayISO() || newDate === todayISO()) {
+    const count = state.logs.filter(l => l.date === todayISO() && l.dayId === log.dayId && l.exerciseId === log.exerciseId).length;
+    syncTodaySetsAfterEdit(log.dayId, log.exerciseId, count);
+  }
+}
+
 function saveEditedSet() {
   const log = state.logs.find(l => l.id === editingLog);
   if (!log) { closeModal(); return; }
   const weight = parseDecimal(document.getElementById('editSetWeight').value) ?? 0;
   const reps = parseInt(document.getElementById('editSetReps').value, 10);
+  const newDate = document.getElementById('editSetDate').value;
   if (!Number.isFinite(reps) || reps <= 0) { alert('Las repeticiones tienen que ser un número mayor a 0.'); return; }
+  if (!newDate || newDate > todayISO()) { alert('La fecha no puede ser futura.'); return; }
+  moveLogToDate(log, newDate);
   log.weight = Math.max(0, weight);
   log.reps = reps;
   log.effort = document.getElementById('editSetEffort').value || null;
@@ -500,12 +528,18 @@ function shiftDate(dateISO, days) {
 
 function shiftHistoryWeek(delta) { historyWeekOffset = Math.min(0, historyWeekOffset + delta); render(); }
 
-/** Historial de notas por semana: navegable, con la nota semanal y la de cada día de esa semana, todas editables. */
+/**
+ * Historial por semana: navegable, con la nota semanal y la de cada día, y lo que se cargó cada día (para
+ * revisarlo y, si alguna serie quedó con la fecha corrida — ej. por el huso horario al entrenar de noche —
+ * corregirla desde ahí). Muestra solo los 7 días de la semana elegida: al cambiar de semana se reconstruye
+ * entero, así que lo de la semana anterior desaparece.
+ */
 function weekHistoryHtml() {
   const monday = shiftDate(mondayOf(todayISO()), historyWeekOffset * 7);
   const sunday = shiftDate(monday, 6);
   const days = Array.from({ length: 7 }, (_, i) => shiftDate(monday, i));
   const isCurrentWeek = historyWeekOffset === 0;
+  const logsFor = (d) => state.logs.filter(l => l.date === d).sort((a, b) => a.ts - b.ts);
   return `<div class="card note-card">
     <div class="week-nav">
       <button class="icon-btn-round" aria-label="Semana anterior" onclick="App.shiftHistoryWeek(-1)">‹</button>
@@ -514,12 +548,18 @@ function weekHistoryHtml() {
     </div>
     <div class="stepper-label" style="margin-top:12px">Notas de la semana (opcional)</div>
     <textarea class="note-textarea" rows="2" placeholder="Ej: esta semana fui dos días por enfermedad" oninput="App.setWeekNoteFor('${monday}', this.value)" onblur="App.commitNotes()">${escapeHtml(state.weekNotes[monday] || '')}</textarea>
-    <div class="stepper-label" style="margin-top:12px">Notas por día</div>
+    <div class="stepper-label" style="margin-top:12px">Notas y series cargadas por día</div>
     <div class="day-notes-list">
-      ${days.map(d => `<div class="day-note-row">
-        <span class="dn-date">${escapeHtml(formatDate(d).slice(0, 5))}</span>
-        <input type="text" class="dn-input" placeholder="Sin nota" value="${escapeHtml(state.dayNotes[d] || '')}" oninput="App.setDayNoteFor('${d}', this.value)" onblur="App.commitNotes()">
-      </div>`).join('')}
+      ${days.map(d => {
+        const dayLogs = logsFor(d);
+        const setsList = dayLogs.length
+          ? `<div class="day-sets-list">${dayLogs.map(l => `<button class="day-set-chip" onclick="App.editSetOpen('${l.id}')" title="Tocá para corregir peso, reps o fecha">${escapeHtml(l.exerciseName)} · ${setLabel(l)}</button>`).join('')}</div>`
+          : '';
+        return `<div class="day-note-row">
+          <span class="dn-date">${escapeHtml(formatDate(d).slice(0, 5))}</span>
+          <input type="text" class="dn-input" placeholder="Sin nota" value="${escapeHtml(state.dayNotes[d] || '')}" oninput="App.setDayNoteFor('${d}', this.value)" onblur="App.commitNotes()">
+        </div>${setsList}`;
+      }).join('')}
     </div>
   </div>`;
 }

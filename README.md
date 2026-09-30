@@ -71,7 +71,19 @@ de progreso del día. En "Hoy" hay un cuadro de notas libres y opcionales
 para el día. En "Entrenador" hay un historial de
 notas navegable semana por semana (con flechas ‹ ›): además de la nota
 de esa semana, se ve y se puede editar la nota de cada uno de sus 7 días,
-tanto en la semana actual como en cualquier semana pasada.
+tanto en la semana actual como en cualquier semana pasada. Bajo cada día
+también se ven, como chips, las series que se cargaron ese día; tocando
+una se puede corregir su peso, reps, esfuerzo **o fecha** — pensado para
+arreglar series que quedaron con la fecha del día siguiente por cargarlas
+de noche (ver más abajo).
+
+Hasta la versión 2026-09-30.2, la fecha del día se calculaba con
+`.toISOString()` (hora UTC) en vez de la hora local: para husos horarios
+negativos (como Argentina, UTC-3) eso hacía que una serie cargada desde
+eso de las 21:00 quedara guardada con la fecha de "mañana". Ya está
+corregido; las series viejas que hayan quedado mal fechadas se pueden
+reubicar a mano desde el historial semanal de "Entrenador", como se
+describe arriba.
 
 Los datos viven solo en este dispositivo: la app pide almacenamiento
 persistente al navegador y recuerda hacer un respaldo si pasa mucho
