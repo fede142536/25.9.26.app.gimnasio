@@ -102,6 +102,19 @@ export function setLockScreenEnabled(enabled) {
   if (!enabled) { stopSilentAudio(); updateMediaSession(); }
 }
 
+/** Estado actual del truco de la pantalla de bloqueo, para el panel de diagnóstico (ver qué falla en el dispositivo real). */
+export function lockScreenDebugInfo() {
+  return {
+    ajusteActivado: lockScreenEnabled,
+    mediaSessionSoportada: 'mediaSession' in navigator,
+    setPositionStateSoportado: typeof navigator.mediaSession?.setPositionState === 'function',
+    descansoActivo: restTimer.active,
+    audioCreado: !!audioEl,
+    audioPausado: audioEl ? audioEl.paused : null,
+    audioEnElDOM: audioEl ? document.body.contains(audioEl) : null,
+  };
+}
+
 function tick(onTick) {
   restTimer.secondsLeft = Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000));
   if (restTimer.secondsLeft <= 0 && restTimer.active) {

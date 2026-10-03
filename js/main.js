@@ -11,7 +11,7 @@ import {
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek, EFFORT_LEVELS } from './coach.js';
-import { restTimer, startRest, skipRest, addRestTime, resyncRest, setLockScreenEnabled } from './timer.js';
+import { restTimer, startRest, skipRest, addRestTime, resyncRest, setLockScreenEnabled, lockScreenDebugInfo } from './timer.js';
 import { icon } from './icons.js';
 import { lineChart } from './charts.js';
 
@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-10-03.2';
+const APP_VERSION = '2026-10-03.3';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -1541,6 +1541,10 @@ async function runInstallDiagnostics() {
     lines.push('Almacenamiento persistente: no soportado por este navegador');
   }
   lines.push(`Pantalla encendida (Wake Lock): ${'wakeLock' in navigator ? 'soportado' : 'no soportado en este navegador'}`);
+  const lsd = lockScreenDebugInfo();
+  lines.push(`Descanso en pantalla de bloqueo — ajuste activado: ${lsd.ajusteActivado ? 'sí' : 'no'}`);
+  lines.push(`  Media Session soportada: ${lsd.mediaSessionSoportada ? 'sí' : 'no'} · barra de progreso (setPositionState): ${lsd.setPositionStateSoportado ? 'sí' : 'no'}`);
+  lines.push(`  descanso activo ahora: ${lsd.descansoActivo ? 'sí' : 'no'}${lsd.descansoActivo ? ` · audio creado: ${lsd.audioCreado ? 'sí' : 'no'} · audio pausado: ${lsd.audioPausado === null ? '—' : (lsd.audioPausado ? 'sí (¡debería estar sonando!)' : 'no, sonando')} · audio en el DOM: ${lsd.audioEnElDOM ? 'sí' : 'no'}` : ' (abrí esto mientras un descanso está corriendo para ver el detalle del audio)'}`);
   lines.push(`Ya instalada (modo app): ${window.matchMedia('(display-mode: standalone)').matches ? 'sí' : 'no'}`);
   lines.push(`El navegador ofreció instalar: ${installPromptFired ? 'sí' : 'no'}`);
   lines.push(`Navegador: ${navigator.userAgent}`);
