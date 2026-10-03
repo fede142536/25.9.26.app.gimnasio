@@ -91,13 +91,21 @@ tiempo sin descargar uno. En "Hoy" se puede mantener la pantalla
 encendida (Wake Lock), y el timer de descanso se recalcula solo si el
 celular se bloquea o la app queda en segundo plano.
 
-El descanso entre series también se ve en la pantalla de bloqueo, como
-un control de reproducción (Media Session API) con el tiempo restante y
-un botón para saltarlo. Para eso reproduce un audio silencioso mientras
-dura el descanso — el truco habitual para esto, ya que la mayoría de los
+Además del descanso entre series (el de cada ejercicio), al terminar un
+ejercicio completo (o toda una superserie) hay un segundo descanso —
+"entre ejercicios" — antes de arrancar el siguiente, con su propia
+duración configurable desde el ⚙️. No aparece si era el último ejercicio
+del día.
+
+Ambos descansos se ven en la pantalla de bloqueo, como un control de
+reproducción (Media Session API) con el tiempo restante y un botón para
+saltarlo. Para eso reproduce un audio casi inaudible mientras dura el
+descanso — el truco habitual para esto, ya que la mayoría de los
 sistemas solo arman ese panel mientras hay algo "sonando" — así que quien
 no lo quiera puede desactivarlo desde el ⚙️ ("Mostrar el descanso en la
-pantalla de bloqueo").
+pantalla de bloqueo"). Para verlo hay que bloquear el teléfono a mano
+(botón de encendido): si "Mantener la pantalla encendida" está activo,
+el celular no llega a bloquearse solo mientras se está en "Hoy".
 
 Las categorías (grupos musculares) se pueden agregar, renombrar y borrar
 desde Rutinas → Categorías: los cambios se aplican a rutinas e historial.

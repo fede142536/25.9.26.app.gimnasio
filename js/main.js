@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-10-03.1';
+const APP_VERSION = '2026-10-03.2';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -173,6 +173,21 @@ function nextActiveInGroup(group) {
   if (!active.length) return null;
   const min = Math.min(...active.map(e => resolvedSets(e.id)));
   return active.find(e => resolvedSets(e.id) === min) || active[0];
+}
+
+/**
+ * Nombre(s) de la próxima unidad (ejercicio o superserie) con series pendientes después de la que contiene
+ * `fromExId`, o null si no queda ninguna — para rotular el descanso entre ejercicios y saber si corresponde.
+ */
+function nextPendingUnitLabel(day, fromExId) {
+  const units = buildUnits(day.exercises);
+  const idx = units.findIndex(u => u.some(e => e.id === fromExId));
+  for (let i = idx + 1; i < units.length; i++) {
+    const unit = units[i];
+    const pending = unit.some(e => resolvedSets(e.id) < e.sets && !isSkipped(state, todayISO(), day.id, e.id));
+    if (pending) return unit.map(e => e.name).join(' + ');
+  }
+  return null;
 }
 
 /** Series ya registradas hoy para un ejercicio: así el progreso del día sobrevive a cerrar la app. */
@@ -373,17 +388,19 @@ function renderRestBar() {
   const m = Math.floor(restTimer.secondsLeft / 60);
   const s = String(restTimer.secondsLeft % 60).padStart(2, '0');
   const pct = (restTimer.secondsLeft / restTimer.total) * 100;
+  const labelPrefix = restTimer.kind === 'exercise' ? 'Antes de' : 'Descanso';
   const existing = host.querySelector('.rest-float');
   if (existing) {
     existing.querySelector('.rest-time').textContent = `${m}:${s}`;
     existing.querySelector('.rest-progress').style.width = `${pct}%`;
+    existing.querySelector('.rest-label').innerHTML = `${labelPrefix}<b>${escapeHtml(restTimer.exerciseName)}</b>`;
     return;
   }
-  host.innerHTML = `<div class="rest-float" role="timer" aria-live="off">
+  host.innerHTML = `<div class="rest-float ${restTimer.kind === 'exercise' ? 'next-exercise' : ''}" role="timer" aria-live="off">
     <div class="rest-progress" style="width:${pct}%"></div>
     <div class="rest-inner">
       <span class="rest-time">${m}:${s}</span>
-      <span class="rest-label">Descanso<b>${escapeHtml(restTimer.exerciseName)}</b></span>
+      <span class="rest-label">${labelPrefix}<b>${escapeHtml(restTimer.exerciseName)}</b></span>
       <button onclick="App.addRest(15)">+15s</button>
       <button class="primary" onclick="App.skipRest()">Saltar</button>
     </div>
@@ -569,7 +586,10 @@ function weekHistoryHtml() {
  * ejercicios "combinados"), no hay descanso hasta terminar la ronda
  * completa (una serie de cada uno); recién ahí se descansa, como se
  * entrena en la práctica. Fuera de una superserie, el descanso es el de
- * siempre, entre cada serie del mismo ejercicio.
+ * siempre, entre cada serie del mismo ejercicio. Y cuando con esta serie
+ * se termina el ejercicio (o toda la superserie), el descanso que sigue
+ * es el de "entre ejercicios" (`startRestBeforeNext`), distinto del de
+ * entre series.
  */
 function logSet(exId, dayId) {
   const routine = getActiveRoutine(state);
@@ -604,7 +624,8 @@ function logSet(exId, dayId) {
       // ella (para su próxima ronda) aunque haya una unidad anterior sin terminar (la saltamos a propósito).
       advancedUnit = group.every(e => resolvedSets(e.id) >= e.sets);
       focusedExId = advancedUnit ? null : ex.id;
-      startRest(ex.restSeconds, ex.name, renderRestBar);
+      if (advancedUnit) startRestBeforeNext(exId, dayId);
+      else startRest(ex.restSeconds, ex.name, renderRestBar);
     } else {
       // sigue la ronda: se pasa directo al otro ejercicio de la superserie, sin descanso
       focusedExId = nextActiveInGroup(group)?.id ?? null;
@@ -612,11 +633,19 @@ function logSet(exId, dayId) {
     }
   } else {
     const finished = resolvedSets(exId) >= ex.sets;
-    if (finished) { focusedExId = null; skipRest(renderRestBar); advancedUnit = true; }
+    if (finished) { focusedExId = null; advancedUnit = true; startRestBeforeNext(exId, dayId); }
     else startRest(ex.restSeconds, ex.name, renderRestBar);
   }
   render();
   if (advancedUnit) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/** Al terminar un ejercicio (o toda una superserie), descansa antes del próximo si queda alguno pendiente. */
+function startRestBeforeNext(exId, dayId) {
+  const day = getActiveRoutine(state).days.find(d => d.id === dayId);
+  const nextName = nextPendingUnitLabel(day, exId);
+  if (nextName) startRest(state.settings.exerciseRestSeconds, nextName, renderRestBar, 'exercise');
+  else skipRest(renderRestBar);
 }
 
 /**
@@ -652,7 +681,10 @@ function skipCurrentSet(exId, dayId) {
     focusedExId = null;
     advancedUnit = true;
   }
-  skipRest(renderRestBar); // no se hizo la serie: no corresponde descansar
+  // no se hizo la serie en sí: no corresponde el descanso entre series. Pero si con esto se terminó el
+  // ejercicio (o la superserie), sí corresponde el descanso antes del próximo — se cambia de estación igual.
+  if (advancedUnit) startRestBeforeNext(exId, dayId);
+  else skipRest(renderRestBar);
   render();
   if (advancedUnit) document.querySelector('.ex-card.current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -1336,6 +1368,10 @@ function settingsModalHtml() {
         <input type="number" step="0.5" value="${s.incrementUpper}" oninput="App.updateSetting('incrementUpper', this.value)"></div>
       <div class="field"><label>Incremento tren inferior (kg)</label>
         <input type="number" step="0.5" value="${s.incrementLower}" oninput="App.updateSetting('incrementLower', this.value)"></div>
+      <div class="field"><label>Descanso entre ejercicios (s)</label>
+        <input type="number" step="5" min="0" value="${s.exerciseRestSeconds}" oninput="App.updateSetting('exerciseRestSeconds', this.value)"></div>
+      <p class="hint" style="margin-top:-8px">Al terminar un ejercicio (o toda una superserie) y pasar al
+        siguiente. Es distinto del descanso entre series, que define cada ejercicio de la rutina.</p>
       <div class="field toggle"><label for="wakeLockToggle">Mantener la pantalla encendida en "Hoy"</label>
         <input type="checkbox" id="wakeLockToggle" ${s.keepScreenOn ? 'checked' : ''} onchange="App.toggleWakeLockSetting(this.checked)"></div>
       ${!('wakeLock' in navigator) ? '<p class="hint" style="margin-top:-8px">Tu navegador no soporta esto acá; no molesta, simplemente no hace nada.</p>' : ''}

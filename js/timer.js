@@ -12,28 +12,35 @@
  *
  * Para que el descanso se vea en la pantalla de bloqueo (sin eso, un
  * timer dentro de una pestaña no se puede mostrar ahí) se usa la Media
- * Session API: se reproduce un audio silencioso en loop — el truco
+ * Session API: se reproduce un audio casi inaudible en loop — el truco
  * habitual para esto, ya que la mayoría de los sistemas solo arman el
- * panel de "reproduciendo ahora" mientras hay audio sonando — y se le
- * pasa duración/posición con `setPositionState`, así el propio sistema
- * dibuja y mueve la barra de progreso aunque la pestaña esté en segundo
- * plano y el JS no pueda correr. Se puede desactivar (`restOnLockScreen`
- * en ajustes) para quien no quiera un control de audio persistente
- * mientras entrena.
+ * panel de "reproduciendo ahora" mientras hay audio sonando, y algunos
+ * (Chrome en particular) ignoran un audio con silencio DIGITAL total
+ * (todas las muestras en 0), así que se usa una amplitud mínima en vez
+ * de ceros — y se le pasa duración/posición con `setPositionState`, así
+ * el propio sistema dibuja y mueve la barra de progreso aunque la
+ * pestaña esté en segundo plano y el JS no pueda correr. Se puede
+ * desactivar (`restOnLockScreen` en ajustes) para quien no quiera un
+ * control de audio persistente mientras entrena.
+ *
+ * Importante: si "Mantener la pantalla encendida" está activo, el
+ * celular no llega a bloquearse mientras se está en "Hoy" — hay que
+ * bloquearlo a mano (botón de encendido) para ver esto en acción.
  */
 
 let intervalId = null;
 let lockScreenEnabled = true;
 let lastOnTick = () => {};
 let audioEl = null;
-export const restTimer = { active: false, endsAt: 0, total: 0, secondsLeft: 0, exerciseName: '' };
+export const restTimer = { active: false, endsAt: 0, total: 0, secondsLeft: 0, exerciseName: '', kind: 'sets' };
 
-/** Un WAV mono de silencio total, generado en el momento (no hace falta ningún archivo de audio). */
+/** Un WAV mono casi inaudible (amplitud mínima, no silencio digital puro), generado en el momento. */
 function silentAudio() {
   if (audioEl) return audioEl;
   const sampleRate = 8000;
   const seconds = 2;
-  const dataSize = sampleRate * seconds * 2; // 16 bits = 2 bytes por muestra
+  const numSamples = sampleRate * seconds;
+  const dataSize = numSamples * 2; // 16 bits = 2 bytes por muestra
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
   const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
@@ -41,9 +48,16 @@ function silentAudio() {
   writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  writeStr(36, 'data'); view.setUint32(40, dataSize, true); // el resto queda en 0: silencio
+  writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+  // onda cuadrada de amplitud 2 (sobre 32767) a la frecuencia de Nyquist: inaudible, pero no son todas muestras
+  // en cero — eso es lo que algunos navegadores necesitan para no tratarlo como "sin audio real".
+  for (let i = 0; i < numSamples; i++) view.setInt16(44 + i * 2, i % 2 === 0 ? 2 : -2, true);
   audioEl = new Audio(URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' })));
   audioEl.loop = true;
+  audioEl.volume = 1;
+  audioEl.setAttribute('playsinline', ''); // no pasar a pantalla completa en iOS
+  audioEl.style.display = 'none';
+  document.body.appendChild(audioEl); // algunos navegadores solo arman la sesión de medios con el audio en el DOM
   return audioEl;
 }
 
@@ -69,7 +83,8 @@ function updateMediaSession() {
   if (!('mediaSession' in navigator)) return;
   try {
     if (restTimer.active) {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: `Descanso · ${restTimer.exerciseName}`, artist: 'Gimnasio' });
+      const title = restTimer.kind === 'exercise' ? `Antes de: ${restTimer.exerciseName}` : `Descanso · ${restTimer.exerciseName}`;
+      navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'Gimnasio' });
       navigator.mediaSession.playbackState = 'playing';
       const position = Math.min(restTimer.total, Math.max(0, restTimer.total - restTimer.secondsLeft));
       navigator.mediaSession.setPositionState({ duration: restTimer.total, playbackRate: 1, position });
@@ -100,13 +115,15 @@ function tick(onTick) {
   onTick();
 }
 
-export function startRest(seconds, exerciseName, onTick) {
+/** `kind`: 'sets' (descanso entre series del mismo ejercicio) o 'exercise' (al pasar al siguiente ejercicio). */
+export function startRest(seconds, exerciseName, onTick, kind = 'sets') {
   clearInterval(intervalId);
   restTimer.active = true;
   restTimer.total = seconds;
   restTimer.endsAt = Date.now() + seconds * 1000;
   restTimer.secondsLeft = seconds;
   restTimer.exerciseName = exerciseName;
+  restTimer.kind = kind;
   lastOnTick = onTick;
   if (lockScreenEnabled) {
     setupMediaSessionActions();

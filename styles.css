@@ -427,6 +427,9 @@ button.set-pill.notdone:active { filter: brightness(0.94); }
   background: var(--surface-2); color: var(--text);
 }
 .rest-float button.primary { background: var(--accent); color: var(--accent-ink); }
+.rest-float.next-exercise { border-color: var(--success); }
+.rest-float.next-exercise .rest-progress { background: var(--success-soft); }
+.rest-float.next-exercise .rest-time { color: var(--success); }
 
 /* ============================================================ Rutinas ============================================================ */
 .routine-card { position: relative; }
