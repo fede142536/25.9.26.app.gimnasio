@@ -67,12 +67,23 @@ function stopSilentAudio() {
   try { audioEl.currentTime = 0; } catch (e) { /* algún navegador lo niega antes de poder reproducir una vez */ }
 }
 
+let lastPlayError = null;
+/** Intenta reproducir el audio silencioso y guarda el motivo si el navegador lo rechaza (para el diagnóstico). */
+function tryPlayAudio() {
+  const p = silentAudio().play();
+  if (p && typeof p.then === 'function') {
+    p.then(() => { lastPlayError = null; }).catch((e) => { lastPlayError = `${e.name}: ${e.message}`; });
+  } else {
+    lastPlayError = null;
+  }
+}
+
 let mediaActionsReady = false;
 function setupMediaSessionActions() {
   if (mediaActionsReady || !('mediaSession' in navigator)) return;
   mediaActionsReady = true;
   const skip = () => skipRest(lastOnTick);
-  const resume = () => { if (restTimer.active) silentAudio().play().catch(() => {}); };
+  const resume = () => { if (restTimer.active) tryPlayAudio(); };
   for (const [action, handler] of [['play', resume], ['pause', resume], ['stop', skip], ['nexttrack', skip]]) {
     try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) { /* esa acción no existe en este navegador */ }
   }
@@ -112,6 +123,7 @@ export function lockScreenDebugInfo() {
     audioCreado: !!audioEl,
     audioPausado: audioEl ? audioEl.paused : null,
     audioEnElDOM: audioEl ? document.body.contains(audioEl) : null,
+    ultimoErrorDeReproduccion: lastPlayError,
   };
 }
 
@@ -124,6 +136,10 @@ function tick(onTick) {
     playBeep();
     stopSilentAudio();
     updateMediaSession();
+  } else if (restTimer.active && lockScreenEnabled && audioEl && audioEl.paused) {
+    // el sistema puede pausar el audio por su cuenta (foco de audio, ahorro de batería, etc.);
+    // sin esto, el control de la pantalla de bloqueo se queda "vivo" pero en silencio y deja de servir.
+    tryPlayAudio();
   }
   onTick();
 }
@@ -140,7 +156,7 @@ export function startRest(seconds, exerciseName, onTick, kind = 'sets') {
   lastOnTick = onTick;
   if (lockScreenEnabled) {
     setupMediaSessionActions();
-    silentAudio().play().catch(() => {}); // necesita el gesto del usuario que ya disparó este registro de serie
+    tryPlayAudio(); // necesita el gesto del usuario que ya disparó este registro de serie
     updateMediaSession();
   }
   intervalId = setInterval(() => tick(onTick), 250);

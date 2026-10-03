@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-10-03.3';
+const APP_VERSION = '2026-10-03.4';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -57,6 +57,11 @@ function lastWeightFor(key) {
 }
 function maxWeightFor(key) {
   const entries = logsForKey(key);
+  return entries.length ? Math.max(...entries.map(l => l.weight)) : 0;
+}
+/** Máximo de días anteriores (sin contar hoy): la base contra la que se compara para marcar "nuevo récord" hoy. */
+function priorMaxWeightFor(key) {
+  const entries = historyLogs().filter(l => l.exerciseKey === key);
   return entries.length ? Math.max(...entries.map(l => l.weight)) : 0;
 }
 
@@ -482,6 +487,24 @@ function moveLogToDate(log, newDate) {
   }
 }
 
+/**
+ * Recalcula si corresponde mostrar "nuevo récord" hoy para un ejercicio, comparando el máximo de hoy contra
+ * el de días anteriores. Hace falta llamarlo después de editar/mover/borrar una serie: el "récord" se marca
+ * una sola vez al registrar la serie (contra el máximo de ese momento) y no se actualizaba solo después, así
+ * que si esa serie tenía un error de tipeo, corregirla no corregía el cartel de récord.
+ */
+function refreshPr(dayId, exerciseId) {
+  const prog = todaySets[exerciseId];
+  if (!prog) return;
+  const ex = findExercise(state, getActiveRoutine(state)?.id, dayId, exerciseId);
+  if (!ex) return;
+  const key = normalizeName(ex.name);
+  const priorMax = priorMaxWeightFor(key);
+  const todayWeights = state.logs.filter(l => l.date === todayISO() && l.dayId === dayId && l.exerciseId === exerciseId).map(l => l.weight);
+  const todayMax = todayWeights.length ? Math.max(...todayWeights) : 0;
+  prog.pr = todayMax > 0 && todayMax > priorMax ? todayMax : null;
+}
+
 function saveEditedSet() {
   const log = state.logs.find(l => l.id === editingLog);
   if (!log) { closeModal(); return; }
@@ -490,10 +513,12 @@ function saveEditedSet() {
   const newDate = document.getElementById('editSetDate').value;
   if (!Number.isFinite(reps) || reps <= 0) { alert('Las repeticiones tienen que ser un número mayor a 0.'); return; }
   if (!newDate || newDate > todayISO()) { alert('La fecha no puede ser futura.'); return; }
+  const { dayId, exerciseId } = log;
   moveLogToDate(log, newDate);
   log.weight = Math.max(0, weight);
   log.reps = reps;
   log.effort = document.getElementById('editSetEffort').value || null;
+  refreshPr(dayId, exerciseId);
   editingLog = null; modalView = null;
   persist(); render();
 }
@@ -506,6 +531,7 @@ function deleteEditedSet() {
   state.logs = state.logs.filter(l => l.id !== log.id);
   const count = renumberSets(date, dayId, exerciseId);
   if (date === todayISO()) syncTodaySetsAfterEdit(dayId, exerciseId, count);
+  refreshPr(dayId, exerciseId);
   editingLog = null; modalView = null;
   persist(); render();
 }
@@ -1545,6 +1571,7 @@ async function runInstallDiagnostics() {
   lines.push(`Descanso en pantalla de bloqueo — ajuste activado: ${lsd.ajusteActivado ? 'sí' : 'no'}`);
   lines.push(`  Media Session soportada: ${lsd.mediaSessionSoportada ? 'sí' : 'no'} · barra de progreso (setPositionState): ${lsd.setPositionStateSoportado ? 'sí' : 'no'}`);
   lines.push(`  descanso activo ahora: ${lsd.descansoActivo ? 'sí' : 'no'}${lsd.descansoActivo ? ` · audio creado: ${lsd.audioCreado ? 'sí' : 'no'} · audio pausado: ${lsd.audioPausado === null ? '—' : (lsd.audioPausado ? 'sí (¡debería estar sonando!)' : 'no, sonando')} · audio en el DOM: ${lsd.audioEnElDOM ? 'sí' : 'no'}` : ' (abrí esto mientras un descanso está corriendo para ver el detalle del audio)'}`);
+  if (lsd.ultimoErrorDeReproduccion) lines.push(`  último error al intentar reproducir el audio: ${lsd.ultimoErrorDeReproduccion}`);
   lines.push(`Ya instalada (modo app): ${window.matchMedia('(display-mode: standalone)').matches ? 'sí' : 'no'}`);
   lines.push(`El navegador ofreció instalar: ${installPromptFired ? 'sí' : 'no'}`);
   lines.push(`Navegador: ${navigator.userAgent}`);

@@ -53,7 +53,9 @@ altura del asiento…), visible en "Hoy" y en "Entrenador".
 
 Cualquier serie ya registrada (en "Hoy" o en el historial de "Progreso")
 se puede tocar para editar el peso/reps/esfuerzo o borrarla, por si se
-cargó mal.
+cargó mal. El cartel de "Nuevo récord" se recalcula al editar o borrar:
+si una serie se cargó con un error de tipeo y marcó un récord falso,
+corregirla corrige también el cartel.
 
 Al registrar cada serie se puede marcar cómo se sintió (Fácil / Justo /
 Al fallo). El entrenador lo usa para afinar la fatiga: entrenar al fallo
@@ -105,7 +107,12 @@ sistemas solo arman ese panel mientras hay algo "sonando" — así que quien
 no lo quiera puede desactivarlo desde el ⚙️ ("Mostrar el descanso en la
 pantalla de bloqueo"). Para verlo hay que bloquear el teléfono a mano
 (botón de encendido): si "Mantener la pantalla encendida" está activo,
-el celular no llega a bloquearse solo mientras se está en "Hoy".
+el celular no llega a bloquearse solo mientras se está en "Hoy". Si el
+sistema pausa ese audio por su cuenta (pasa en algunos Android), la app
+lo detecta y lo reanuda sola en el siguiente segundo; si el navegador
+directamente no deja reproducirlo, el motivo queda a la vista en el
+Diagnóstico de instalación (⚙️), abierto mientras un descanso está
+corriendo.
 
 Las categorías (grupos musculares) se pueden agregar, renombrar y borrar
 desde Rutinas → Categorías: los cambios se aplican a rutinas e historial.
