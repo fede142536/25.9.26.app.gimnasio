@@ -11,7 +11,7 @@ import {
 import { getCategories, setCategories, muscleGroupClass, guessMuscleGroup, slotFor, freeSlot, MAX_CATEGORIES } from './muscleGroups.js';
 import { extractTextFromDocx, parseRoutineText, fillMissingGroups, PASTE_PLACEHOLDER } from './parser.js';
 import { weekInfo, nextDeloadDate, suggestForExercise, overallFatigue, cycleStartForWeek, EFFORT_LEVELS } from './coach.js';
-import { restTimer, startRest, skipRest, addRestTime, resyncRest } from './timer.js';
+import { restTimer, startRest, skipRest, addRestTime, resyncRest, setLockScreenEnabled } from './timer.js';
 import { icon } from './icons.js';
 import { lineChart } from './charts.js';
 
@@ -32,7 +32,7 @@ let historyWeekOffset = 0; // semanas hacia atrás desde la actual, en el histor
 let editingLog = null; // id del log (serie) que se está editando o borrando
 
 /** Se muestra en el diagnóstico para confirmar que el dispositivo tiene la última versión publicada. */
-const APP_VERSION = '2026-09-30.3';
+const APP_VERSION = '2026-10-03.1';
 
 const WEEKDAY_LABELS =['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -1339,6 +1339,11 @@ function settingsModalHtml() {
       <div class="field toggle"><label for="wakeLockToggle">Mantener la pantalla encendida en "Hoy"</label>
         <input type="checkbox" id="wakeLockToggle" ${s.keepScreenOn ? 'checked' : ''} onchange="App.toggleWakeLockSetting(this.checked)"></div>
       ${!('wakeLock' in navigator) ? '<p class="hint" style="margin-top:-8px">Tu navegador no soporta esto acá; no molesta, simplemente no hace nada.</p>' : ''}
+      <div class="field toggle"><label for="lockScreenToggle">Mostrar el descanso en la pantalla de bloqueo</label>
+        <input type="checkbox" id="lockScreenToggle" ${s.restOnLockScreen ? 'checked' : ''} onchange="App.toggleLockScreenSetting(this.checked)"></div>
+      <p class="hint" style="margin-top:-8px">Reproduce un audio silencioso mientras descansás, para que el sistema
+        muestre el tiempo restante como un control de reproducción en la pantalla bloqueada. Si no te sirve, o no
+        querés ningún control de audio persistente mientras entrenás, desactivalo acá.</p>
       <h2 style="font-size:15px;margin-top:18px">Respaldo de datos</h2>
       <p class="hint">Tus datos se guardan solo en este dispositivo. Descargá una copia de respaldo de vez en cuando.</p>
       <div class="btn-row">
@@ -1439,6 +1444,7 @@ function snoozeBackup() {
   persist(); render();
 }
 function toggleWakeLockSetting(checked) { state.settings.keepScreenOn = checked; persist(); syncWakeLock(); }
+function toggleLockScreenSetting(checked) { state.settings.restOnLockScreen = checked; persist(); setLockScreenEnabled(checked); }
 function doImport(input) {
   const file = input.files[0];
   if (!file) return;
@@ -1520,7 +1526,7 @@ window.App = {
   openCategories, renameCat, addCat, askDeleteCat, cancelDeleteCat, confirmDeleteCat,
   bodySetDate, bodySetValue, setBodyMetric, bodyCancelEdit, saveMeasurements, editMeasurement, deleteMeasurement, editHeight,
   exportWorkouts: () => exportWorkoutsCsv(state), exportMeasures: () => exportMeasurementsCsv(state),
-  editSetOpen, saveEditedSet, deleteEditedSet, setEditSetEffort, snoozeBackup, toggleWakeLockSetting,
+  editSetOpen, saveEditedSet, deleteEditedSet, setEditSetEffort, snoozeBackup, toggleWakeLockSetting, toggleLockScreenSetting,
 };
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -1563,6 +1569,8 @@ document.addEventListener('visibilitychange', () => {
     syncWakeLock();
   }
 });
+
+setLockScreenEnabled(state.settings.restOnLockScreen);
 
 if (!state.selectedDayId) { const r = getActiveRoutine(state); state.selectedDayId = r?.days[0]?.id || null; }
 render();

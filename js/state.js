@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   incrementLower: 5,     // kg que se suman al progresar en tren inferior
   repIncrement: 1,       // reps que se suman cuando no se puede subir el peso (ej. peso corporal)
   keepScreenOn: true,    // pantalla encendida en 'Hoy' (Wake Lock API; si el navegador no la soporta, no hace nada)
+  restOnLockScreen: true, // muestra el descanso entre series en la pantalla de bloqueo (Media Session API)
 };
 
 function emptyState() {
